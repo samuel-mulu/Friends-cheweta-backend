@@ -1,0 +1,380 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  PLAYER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  BLOCKED
+}
+
+enum WalletTransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  WITHDRAWAL_LOCK
+  WITHDRAWAL_RELEASE
+  WITHDRAWAL_PAYOUT
+  GAME_ENTRY_LOCK
+  GAME_ENTRY_RELEASE
+  GAME_ENTRY_SPEND
+  GAME_WIN
+  GAME_FEE
+  REFUND
+  ADMIN_ADJUSTMENT
+}
+
+enum PaymentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum PaymentChannel {
+  CBE
+  TELEBIRR
+  MANUAL
+  OTHER
+}
+
+enum MatchEntryStatus {
+  LOCKED
+  REFUNDED
+  SETTLED
+}
+
+enum MatchStatus {
+  CREATED
+  WAITING
+  READY
+  PLAYING
+  FINISHING
+  FINISHED
+  CANCELLED
+  ABORTED
+}
+
+model User {
+  id           String     @id @default(uuid())
+  fullName     String
+  phoneNumber  String     @unique
+  passwordHash String
+  role         UserRole   @default(PLAYER)
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  wallet            Wallet?
+  sessions          UserSession[]
+  deposits          Deposit[]
+  withdrawals       Withdrawal[]
+  matchParticipants MatchParticipant[]
+  matchEntries      MatchEntry[]
+  notifications     Notification[]
+  riskFlags         RiskFlag[]
+  auditActions      AuditLog[]
+
+  @@index([status])
+  @@index([role])
+}
+
+model UserSession {
+  id               String    @id @default(uuid())
+  userId           String
+  refreshTokenHash String
+  deviceName       String?
+  ipAddress        String?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Wallet {
+  id               String   @id @default(uuid())
+  userId           String   @unique
+  currency         String   @default("ETB")
+  availableBalance BigInt   @default(0)
+  lockedBalance    BigInt   @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user         User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  transactions WalletTransaction[]
+}
+
+model WalletTransaction {
+  id                     String                @id @default(uuid())
+  walletId               String
+  type                   WalletTransactionType
+  amountMinor            BigInt
+  availableDelta         BigInt
+  lockedDelta            BigInt
+  availableBalanceBefore BigInt
+  availableBalanceAfter  BigInt
+  lockedBalanceBefore    BigInt
+  lockedBalanceAfter     BigInt
+  referenceType          String?
+  referenceId            String?
+  idempotencyKey         String                @unique
+  metadata               Json?
+  createdAt              DateTime              @default(now())
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Restrict)
+
+  @@index([walletId, createdAt])
+  @@index([referenceType, referenceId])
+  @@index([type, createdAt])
+}
+
+model Deposit {
+  id                   String         @id @default(uuid())
+  userId               String
+  amountMinor          BigInt
+  channel              PaymentChannel
+  transactionReference String         @unique
+  status               PaymentStatus  @default(PENDING)
+  idempotencyKey       String         @unique
+  note                 String?
+  reviewedByUserId     String?
+  reviewedAt           DateTime?
+  rejectionReason      String?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+}
+
+model Withdrawal {
+  id               String         @id @default(uuid())
+  userId           String
+  amountMinor      BigInt
+  channel          PaymentChannel
+  destination      String
+  status           PaymentStatus  @default(PENDING)
+  idempotencyKey   String         @unique
+  note             String?
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+  rejectionReason  String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+}
+
+model Game {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  description String?
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  modes   GameMode[]
+  matches Match[]
+}
+
+model GameMode {
+  id                  String   @id @default(uuid())
+  gameId              String
+  code                String   @unique
+  name                String
+  playerCount         Int
+  stakeAmountMinor    BigInt
+  platformFeeBps      Int
+  turnDurationSeconds Int
+  rulesVersion        String
+  enabled             Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  game    Game    @relation(fields: [gameId], references: [id], onDelete: Restrict)
+  matches Match[]
+
+  @@index([gameId, enabled])
+}
+
+model Match {
+  id               String      @id @default(uuid())
+  gameId           String
+  gameModeId       String
+  status           MatchStatus @default(CREATED)
+  rulesVersion     String
+  stakeAmountMinor BigInt
+  platformFeeBps   Int
+  matchmakingKey  String?     @unique
+  entrySecuredAt   DateTime?
+  cancelledAt      DateTime?
+  cancellationReason String?
+  winnerOrder       Json?
+  resultVersion     Int?
+  createdAt        DateTime    @default(now())
+  startedAt        DateTime?
+  finishedAt       DateTime?
+  updatedAt        DateTime    @updatedAt
+
+  game         Game               @relation(fields: [gameId], references: [id], onDelete: Restrict)
+  gameMode     GameMode           @relation(fields: [gameModeId], references: [id], onDelete: Restrict)
+  participants MatchParticipant[]
+  entries      MatchEntry[]
+  settlement   MatchSettlement?
+  events       MatchEvent[]
+  checkpoint   MatchCheckpoint?
+  riskFlags    RiskFlag[]
+
+  @@index([gameId, status, createdAt])
+  @@index([gameModeId, status, createdAt])
+}
+
+model MatchParticipant {
+  id             String   @id @default(uuid())
+  matchId        String
+  userId         String
+  seat           Int
+  resultPosition Int?
+  joinedAt       DateTime @default(now())
+  finishedAt     DateTime?
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Restrict)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([matchId, userId])
+  @@unique([matchId, seat])
+  @@index([userId, joinedAt])
+}
+
+model MatchEntry {
+  id          String           @id @default(uuid())
+  matchId     String
+  userId      String
+  amountMinor BigInt
+  status      MatchEntryStatus @default(LOCKED)
+  lockedAt    DateTime         @default(now())
+  refundedAt  DateTime?
+  settledAt   DateTime?
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Restrict)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([matchId, userId])
+  @@index([userId, status])
+}
+
+model MatchSettlement {
+  id             String   @id @default(uuid())
+  matchId        String   @unique
+  winnerUserId   String
+  potAmountMinor BigInt
+  platformFeeMinor BigInt
+  payoutAmountMinor BigInt
+  winnerOrder    Json
+  settledAt      DateTime @default(now())
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Restrict)
+}
+
+
+model MatchEvent {
+  id        String   @id @default(uuid())
+  matchId   String
+  sequence  Int
+  version   Int
+  commandId String?
+  type      String
+  payload   Json
+  createdAt DateTime @default(now())
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Restrict)
+
+  @@unique([matchId, sequence])
+  @@index([matchId, version])
+  @@index([matchId, createdAt])
+}
+
+model MatchCheckpoint {
+  id        String   @id @default(uuid())
+  matchId   String   @unique
+  version   Int
+  state     Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Restrict)
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String
+  title     String
+  message   String
+  data      Json?
+  dedupeKey String?  @unique
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+}
+
+model RiskFlag {
+  id          String   @id @default(uuid())
+  userId      String?
+  matchId     String?
+  type        String
+  severity    String
+  status      String   @default("OPEN")
+  reason      String
+  evidence    Json?
+  fingerprint String   @unique
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user  User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  match Match? @relation(fields: [matchId], references: [id], onDelete: SetNull)
+
+  @@index([status, severity, createdAt])
+  @@index([userId, createdAt])
+  @@index([matchId])
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  actorUserId  String?
+  action       String
+  entityType   String
+  entityId     String?
+  metadata     Json?
+  requestId    String?
+  createdAt    DateTime @default(now())
+
+  actor User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([actorUserId, createdAt])
+  @@index([entityType, entityId, createdAt])
+  @@index([action, createdAt])
+}

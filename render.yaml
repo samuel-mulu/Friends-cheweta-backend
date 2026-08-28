@@ -1,0 +1,72 @@
+# Render Blueprint — Friends Game Hub API
+#
+# Use when this repo root IS friends-game-backend-b0-b20.
+# For a monorepo parent folder, use ../render.yaml instead (rootDir set there).
+#
+# After first deploy:
+#   1. Set secret env vars in the Render dashboard (DATABASE_URL, JWT secrets, etc.).
+#   2. Open Shell once: npm run seed
+#   3. Point Vercel admin at https://<this-service>.onrender.com
+
+services:
+  - type: redis
+    name: friends-game-redis
+    plan: starter
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
+
+  - type: web
+    name: friends-game-api
+    runtime: node
+    plan: starter
+    region: frankfurt
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: npm run start:prod
+    releaseCommand: npx prisma migrate deploy
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: friends-game-redis
+          property: connectionString
+      - key: REDIS_KEY_PREFIX
+        value: friends-game-prod
+      - key: REDIS_RUNTIME_TTL_SECONDS
+        value: "86400"
+      - key: REDIS_COMMAND_TTL_SECONDS
+        value: "86400"
+      - key: REDIS_PRESENCE_TTL_SECONDS
+        value: "90"
+      - key: REDIS_MATCHMAKING_TTL_SECONDS
+        value: "600"
+      - key: REDIS_LOCK_TTL_MS
+        value: "5000"
+      - key: JWT_ACCESS_TTL
+        value: 15m
+      - key: JWT_REFRESH_TTL
+        value: 30d
+      - key: LUDO_MAX_CONSECUTIVE_TIMEOUTS
+        value: "3"
+      - key: LUDO_DISCONNECT_GRACE_SECONDS
+        value: "90"
+      - key: LUDO_READY_NO_SHOW_SECONDS
+        value: "180"
+      - key: ADMIN_FULL_NAME
+        value: Friends Admin
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_DATABASE_URL
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: ADMIN_PHONE
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false

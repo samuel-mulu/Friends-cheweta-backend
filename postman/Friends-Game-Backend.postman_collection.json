@@ -1,0 +1,854 @@
+{
+  "info": {
+    "_postman_id": "friends-game-backend-b0-b20",
+    "name": "Friends Game Backend",
+    "description": "Full REST API collection for Friends Game Backend (NestJS).\n\n**Setup**\n1. Import this collection.\n2. Default `baseUrl` is `http://localhost:5000/api` (change if your PORT differs).\n3. Run **Auth → Admin Login** (or Register + Login) — tokens are saved automatically.\n4. All protected requests use `Authorization: Bearer {{accessToken}}`.\n\n**Seeded admin:** phone `251911000000`, password `change-this-admin-password`\n\n**Notes**\n- Amounts are minor units as digit strings (e.g. `\"1000\"` = 10.00 ETB).\n- Deposit/withdrawal `idempotencyKey` must be unique per operation.\n- Matchmaking & Ludo gameplay use WebSocket namespace `/game` (not included as REST).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000/api" },
+    { "key": "accessToken", "value": "" },
+    { "key": "refreshToken", "value": "" },
+    { "key": "userId", "value": "" },
+    { "key": "matchId", "value": "" },
+    { "key": "gameModeId", "value": "" },
+    { "key": "depositId", "value": "" },
+    { "key": "withdrawalId", "value": "" },
+    { "key": "notificationId", "value": "" },
+    { "key": "targetUserId", "value": "" },
+    { "key": "riskFlagId", "value": "" },
+    { "key": "gameModeAdminId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/health",
+            "description": "Public liveness check. Returns database and Redis status."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "description": "Public endpoints — no Bearer token required.",
+      "item": [
+        {
+          "name": "Register Player",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.accessToken) pm.collectionVariables.set('accessToken', json.accessToken);",
+                  "  if (json.refreshToken) pm.collectionVariables.set('refreshToken', json.refreshToken);",
+                  "  if (json.user && json.user.id) pm.collectionVariables.set('userId', json.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Test Player\",\n  \"phoneNumber\": \"0911223344\",\n  \"password\": \"password123\",\n  \"deviceName\": \"Postman\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/register",
+            "description": "Register a new player. Phone is normalized to Ethiopian format server-side."
+          },
+          "response": []
+        },
+        {
+          "name": "Login Player",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.accessToken) pm.collectionVariables.set('accessToken', json.accessToken);",
+                  "  if (json.refreshToken) pm.collectionVariables.set('refreshToken', json.refreshToken);",
+                  "  if (json.user && json.user.id) pm.collectionVariables.set('userId', json.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phoneNumber\": \"0911223344\",\n  \"password\": \"password123\",\n  \"deviceName\": \"Postman\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/login"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.accessToken) pm.collectionVariables.set('accessToken', json.accessToken);",
+                  "  if (json.refreshToken) pm.collectionVariables.set('refreshToken', json.refreshToken);",
+                  "  if (json.user && json.user.id) pm.collectionVariables.set('userId', json.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phoneNumber\": \"251911000000\",\n  \"password\": \"change-this-admin-password\",\n  \"deviceName\": \"Postman Admin\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/login",
+            "description": "Login with seeded admin account. Required before Admin folder requests."
+          },
+          "response": []
+        },
+        {
+          "name": "Refresh Tokens",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.accessToken) pm.collectionVariables.set('accessToken', json.accessToken);",
+                  "  if (json.refreshToken) pm.collectionVariables.set('refreshToken', json.refreshToken);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/refresh",
+            "description": "Rotate access + refresh tokens."
+          },
+          "response": []
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/logout"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/users/me"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Wallet",
+      "item": [
+        {
+          "name": "Get My Wallet",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/wallet/me"
+          },
+          "response": []
+        },
+        {
+          "name": "List My Transactions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/wallet/transactions/me?limit=30",
+              "host": ["{{baseUrl}}"],
+              "path": ["wallet", "transactions", "me"],
+              "query": [
+                { "key": "limit", "value": "30", "description": "1-100, default 30" },
+                { "key": "cursor", "value": "", "description": "Pagination cursor (transaction id)", "disabled": true }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Payments",
+      "item": [
+        {
+          "name": "Create Deposit",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('depositIdempotencyKey', 'deposit-' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.id) pm.collectionVariables.set('depositId', json.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amountMinor\": \"10000\",\n  \"channel\": \"TELEBIRR\",\n  \"transactionReference\": \"TXN-123456789\",\n  \"idempotencyKey\": \"{{depositIdempotencyKey}}\",\n  \"note\": \"Top up via Telebirr\"\n}"
+            },
+            "url": "{{baseUrl}}/payments/deposits",
+            "description": "channel: CBE | TELEBIRR | MANUAL | OTHER"
+          },
+          "response": []
+        },
+        {
+          "name": "List My Deposits",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/payments/deposits/me"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Withdrawal",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('withdrawIdempotencyKey', 'withdraw-' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.id) pm.collectionVariables.set('withdrawalId', json.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amountMinor\": \"5000\",\n  \"channel\": \"CBE\",\n  \"destination\": \"1000123456789\",\n  \"idempotencyKey\": \"{{withdrawIdempotencyKey}}\",\n  \"note\": \"Withdraw to CBE account\"\n}"
+            },
+            "url": "{{baseUrl}}/payments/withdrawals"
+          },
+          "response": []
+        },
+        {
+          "name": "List My Withdrawals",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/payments/withdrawals/me"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Gaming",
+      "item": [
+        {
+          "name": "List Games",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/games"
+          },
+          "response": []
+        },
+        {
+          "name": "List Game Modes (LUDO)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  const modes = Array.isArray(json) ? json : (json.items || []);",
+                  "  if (modes[0] && modes[0].id) pm.collectionVariables.set('gameModeId', modes[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/games/LUDO/modes",
+            "description": "Seeded modes: LUDO_1V1_10, LUDO_1V1_20, LUDO_1V1_50"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Match",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/matches/{{matchId}}",
+            "description": "Basic match view for participant. Set {{matchId}} from matchmaking WebSocket or admin list."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Match History",
+      "item": [
+        {
+          "name": "List My Matches",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  const items = json.items || [];",
+                  "  if (items[0] && items[0].id) pm.collectionVariables.set('matchId', items[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/matches/me?limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["matches", "me"],
+              "query": [
+                { "key": "limit", "value": "20", "description": "1-50" },
+                { "key": "cursor", "value": "", "disabled": true }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Match (Full)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/matches/{{matchId}}",
+            "description": "Full match with entries and settlement."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Match Replay",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/matches/{{matchId}}/replay"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "item": [
+        {
+          "name": "List Notifications",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  const items = Array.isArray(json) ? json : (json.items || []);",
+                  "  if (items[0] && items[0].id) pm.collectionVariables.set('notificationId', items[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notifications?limit=30&unreadOnly=false",
+              "host": ["{{baseUrl}}"],
+              "path": ["notifications"],
+              "query": [
+                { "key": "limit", "value": "30" },
+                { "key": "unreadOnly", "value": "false", "description": "true to filter unread only" }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Mark Notification Read",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": "{{baseUrl}}/notifications/{{notificationId}}/read"
+          },
+          "response": []
+        },
+        {
+          "name": "Mark All Notifications Read",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": "{{baseUrl}}/notifications/read-all"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "description": "Requires JWT with ADMIN role. Run Auth → Admin Login first.",
+      "item": [
+        {
+          "name": "Users",
+          "item": [
+            {
+              "name": "List Users",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 200) {",
+                      "  const json = pm.response.json();",
+                      "  const users = Array.isArray(json) ? json : (json.items || []);",
+                      "  const player = users.find(u => u.role === 'PLAYER') || users[0];",
+                      "  if (player && player.id) pm.collectionVariables.set('targetUserId', player.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{baseUrl}}/admin/users"
+              },
+              "response": []
+            },
+            {
+              "name": "Get User By ID",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{baseUrl}}/admin/users/{{targetUserId}}"
+              },
+              "response": []
+            },
+            {
+              "name": "Update User Status",
+              "request": {
+                "method": "PATCH",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"ACTIVE\"\n}"
+                },
+                "url": "{{baseUrl}}/admin/users/{{targetUserId}}/status",
+                "description": "status: ACTIVE | BLOCKED"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Payments",
+          "item": [
+            {
+              "name": "List Deposits",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 200) {",
+                      "  const json = pm.response.json();",
+                      "  const items = Array.isArray(json) ? json : (json.items || []);",
+                      "  if (items[0] && items[0].id) pm.collectionVariables.set('depositId', items[0].id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/payments/deposits?status=PENDING&limit=50",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["admin", "payments", "deposits"],
+                  "query": [
+                    { "key": "status", "value": "PENDING", "description": "PENDING | APPROVED | REJECTED" },
+                    { "key": "limit", "value": "50" }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Approve Deposit",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": "{{baseUrl}}/admin/payments/deposits/{{depositId}}/approve"
+              },
+              "response": []
+            },
+            {
+              "name": "Reject Deposit",
+              "request": {
+                "method": "PATCH",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"Transaction reference could not be verified\"\n}"
+                },
+                "url": "{{baseUrl}}/admin/payments/deposits/{{depositId}}/reject"
+              },
+              "response": []
+            },
+            {
+              "name": "List Withdrawals",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 200) {",
+                      "  const json = pm.response.json();",
+                      "  const items = Array.isArray(json) ? json : (json.items || []);",
+                      "  if (items[0] && items[0].id) pm.collectionVariables.set('withdrawalId', items[0].id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/payments/withdrawals?status=PENDING&limit=50",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["admin", "payments", "withdrawals"],
+                  "query": [
+                    { "key": "status", "value": "PENDING" },
+                    { "key": "limit", "value": "50" }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Approve Withdrawal",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": "{{baseUrl}}/admin/payments/withdrawals/{{withdrawalId}}/approve"
+              },
+              "response": []
+            },
+            {
+              "name": "Reject Withdrawal",
+              "request": {
+                "method": "PATCH",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"Insufficient verification documents\"\n}"
+                },
+                "url": "{{baseUrl}}/admin/payments/withdrawals/{{withdrawalId}}/reject"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Gaming",
+          "item": [
+            {
+              "name": "Create Game Mode",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 200 || pm.response.code === 201) {",
+                      "  const json = pm.response.json();",
+                      "  if (json.id) pm.collectionVariables.set('gameModeAdminId', json.id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"gameCode\": \"LUDO\",\n  \"code\": \"LUDO_1V1_100\",\n  \"name\": \"Ludo 1v1 - 100 ETB\",\n  \"playerCount\": 2,\n  \"stakeAmountMinor\": \"10000\",\n  \"platformFeeBps\": 500,\n  \"turnDurationSeconds\": 30,\n  \"rulesVersion\": \"LUDO_CLASSIC_V1\",\n  \"enabled\": true\n}"
+                },
+                "url": "{{baseUrl}}/admin/games/modes"
+              },
+              "response": []
+            },
+            {
+              "name": "Update Game Mode",
+              "request": {
+                "method": "PATCH",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Ludo 1v1 - 100 ETB (Updated)\",\n  \"stakeAmountMinor\": \"10000\",\n  \"platformFeeBps\": 400,\n  \"turnDurationSeconds\": 45,\n  \"enabled\": true\n}"
+                },
+                "url": "{{baseUrl}}/admin/games/modes/{{gameModeAdminId}}"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Operations",
+          "item": [
+            {
+              "name": "Dashboard",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{baseUrl}}/admin/dashboard"
+              },
+              "response": []
+            },
+            {
+              "name": "List Matches",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 200) {",
+                      "  const json = pm.response.json();",
+                      "  const items = json.items || (Array.isArray(json) ? json : []);",
+                      "  if (items[0] && items[0].id) pm.collectionVariables.set('matchId', items[0].id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/matches?limit=50",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["admin", "matches"],
+                  "query": [
+                    { "key": "limit", "value": "50" },
+                    { "key": "status", "value": "FINISHED", "description": "CREATED|WAITING|READY|PLAYING|FINISHING|FINISHED|CANCELLED|ABORTED", "disabled": true }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Get Match (Admin)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{baseUrl}}/admin/matches/{{matchId}}"
+              },
+              "response": []
+            },
+            {
+              "name": "Get Match Replay (Admin)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{baseUrl}}/admin/matches/{{matchId}}/replay"
+              },
+              "response": []
+            },
+            {
+              "name": "List Risk Flags",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 200) {",
+                      "  const json = pm.response.json();",
+                      "  const items = Array.isArray(json) ? json : (json.items || []);",
+                      "  if (items[0] && items[0].id) pm.collectionVariables.set('riskFlagId', items[0].id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/risk-flags?status=OPEN&limit=100",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["admin", "risk-flags"],
+                  "query": [
+                    { "key": "status", "value": "OPEN" },
+                    { "key": "limit", "value": "100" }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Review Risk Flag",
+              "request": {
+                "method": "PATCH",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"REVIEWED\"\n}"
+                },
+                "url": "{{baseUrl}}/admin/risk-flags/{{riskFlagId}}",
+                "description": "status: REVIEWED | DISMISSED"
+              },
+              "response": []
+            },
+            {
+              "name": "List Audit Logs",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/audit?limit=100",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["admin", "audit"],
+                  "query": [
+                    { "key": "limit", "value": "100" },
+                    { "key": "action", "value": "USER_STATUS_CHANGED", "disabled": true }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "WebSocket Reference",
+      "description": "Realtime gameplay is NOT REST. Connect with Socket.IO to ws://localhost:5000/game\n\nAuth on connect:\n- handshake.auth.token = accessToken, OR\n- Authorization: Bearer <accessToken>\n\n**Client events:**\n- matchmaking:join → { gameModeId }\n- matchmaking:cancel\n- matchmaking:status\n- match:join → { matchId }\n- ludo:sync → { matchId }\n- ludo:roll_for_start → { matchId, commandId, expectedVersion }\n- ludo:roll → { matchId, commandId, expectedVersion }\n- ludo:move → { matchId, commandId, expectedVersion, tokenId }\n- ludo:resign → { matchId, commandId, expectedVersion }\n\n**Server events:** session:ready, session:error, matchmaking:matched",
+      "item": [
+        {
+          "name": "README — use Socket.IO client",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/health",
+            "description": "Postman WebSocket tab: connect to http://localhost:5000/game with Socket.IO v4.\nPass token in auth: { \"token\": \"<accessToken>\" }"
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

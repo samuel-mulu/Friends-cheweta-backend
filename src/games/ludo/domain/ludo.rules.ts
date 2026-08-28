@@ -1,0 +1,25 @@
+export const LUDO_CLASSIC_V1 = {
+  version: 'LUDO_CLASSIC_V1' as const,
+  minPlayers: 2,
+  maxPlayers: 4,
+  tokensPerPlayer: 4,
+  dieSides: 6,
+  requireSixToDeploy: true,
+  sixGrantsExtraRoll: true,
+  maxConsecutiveSixes: 3,
+  thirdConsecutiveSixForfeitsRoll: true,
+  captureEnabled: true,
+  captureGrantsExtraRoll: false,
+  safeSquaresEnabled: true,
+  blockadeEnabled: true,
+  blockadeMinTokens: 2,
+  exactRollToFinish: true,
+  finishGrantsExtraRoll: false,
+  firstPlayerMethod: 'HIGHEST_PRE_ROLL' as const,
+  direction: 'CLOCKWISE' as const,
+  trackLength: 52,
+  homeColumnLength: 5,
+  finishProgress: 57,
+} as const;
+
+export type LudoClassicV1Rules = typeof LUDO_CLASSIC_V1;
