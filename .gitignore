@@ -4,5 +4,8 @@ coverage
 .env
 *.log
 .DS_Store
+prisma.config.js
+prisma.config.js.map
+prisma.config.d.ts
 
 /src/generated/prisma
