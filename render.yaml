@@ -3,13 +3,18 @@
 # Use when this repo root IS friends-game-backend-b0-b20.
 # For a monorepo parent folder, use ../render.yaml instead (rootDir set there).
 #
+# IMPORTANT (Redis):
+# - Do NOT paste REDIS_URL=redis://127.0.0.1:6379 from local .env into Render.
+# - REDIS_URL is wired automatically from the Key Value instance below.
+# - If you manually set REDIS_URL in the dashboard, delete it so the link below applies.
+#
 # After first deploy:
 #   1. Set secret env vars in the Render dashboard (DATABASE_URL, JWT secrets, etc.).
-#   2. Open Shell once: npm run seed
+#   2. Open Shell once: npm run deploy:seed
 #   3. Point Vercel admin at https://<this-service>.onrender.com
 
 services:
-  - type: redis
+  - type: keyvalue
     name: friends-game-redis
     plan: starter
     maxmemoryPolicy: allkeys-lru
@@ -29,7 +34,7 @@ services:
         value: production
       - key: REDIS_URL
         fromService:
-          type: redis
+          type: keyvalue
           name: friends-game-redis
           property: connectionString
       - key: REDIS_KEY_PREFIX

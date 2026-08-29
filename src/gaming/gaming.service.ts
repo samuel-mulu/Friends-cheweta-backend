@@ -103,6 +103,75 @@ export class GamingService {
     });
   }
 
+  async createOpenMatch(gameModeId: string, hostUserId: string) {
+    const mode = await this.prisma.gameMode.findUnique({
+      where: { id: gameModeId },
+      include: { game: true },
+    });
+    if (!mode || !mode.enabled || !mode.game.enabled) {
+      throw new NotFoundException({ code: 'GAME_MODE_NOT_AVAILABLE', message: 'Game mode is not available.' });
+    }
+    if (mode.game.code !== 'LUDO' || mode.playerCount !== 2) {
+      throw new ConflictException({
+        code: 'MATCHMAKING_MODE_NOT_SUPPORTED',
+        message: 'Ready lobby currently supports Ludo 1v1 modes only.',
+      });
+    }
+
+    const match = await this.prisma.match.create({
+      data: {
+        gameId: mode.gameId,
+        gameModeId: mode.id,
+        status: MatchStatus.WAITING,
+        rulesVersion: mode.rulesVersion,
+        stakeAmountMinor: mode.stakeAmountMinor,
+        platformFeeBps: mode.platformFeeBps,
+        participants: {
+          create: [{ userId: hostUserId, seat: 0 }],
+        },
+      },
+      include: { game: true, gameMode: true, participants: true },
+    });
+    return this.serializeMatch(match);
+  }
+
+  async joinOpenMatch(matchId: string, userId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const match = await tx.match.findUnique({
+        where: { id: matchId },
+        include: { participants: true, gameMode: { include: { game: true } } },
+      });
+      if (!match) {
+        throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
+      }
+      if (match.status !== MatchStatus.WAITING) {
+        throw new ConflictException({ code: 'MATCH_NOT_JOINABLE', message: 'This player is no longer waiting.' });
+      }
+      if (match.participants.length !== 1) {
+        throw new ConflictException({ code: 'MATCH_NOT_JOINABLE', message: 'This match is no longer available.' });
+      }
+      if (match.participants.some((participant) => participant.userId === userId)) {
+        throw new ConflictException({ code: 'CANNOT_CHALLENGE_SELF', message: 'You cannot join your own ready slot.' });
+      }
+      if (match.gameMode.game.code !== 'LUDO' || match.gameMode.playerCount !== 2) {
+        throw new ConflictException({
+          code: 'MATCHMAKING_MODE_NOT_SUPPORTED',
+          message: 'Ready lobby currently supports Ludo 1v1 modes only.',
+        });
+      }
+
+      await tx.matchParticipant.create({
+        data: { matchId: match.id, userId, seat: 1 },
+      });
+
+      const updated = await tx.match.findUniqueOrThrow({
+        where: { id: matchId },
+        include: { game: true, gameMode: true, participants: true },
+      });
+      return this.serializeMatch(updated);
+    });
+  }
+
   async createMatchedMatch(gameModeId: string, userIds: string[], matchmakingKey: string) {
     const existing = await this.prisma.match.findUnique({
       where: { matchmakingKey },

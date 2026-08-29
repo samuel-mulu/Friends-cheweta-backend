@@ -20,7 +20,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { SettlementService } from '../settlement/settlement.service';
 import { LudoRuntimeRepository } from './ludo-runtime.repository';
-import { RuntimeExecution } from './realtime.types';
+import { RuntimeExecution, LudoMatchParticipantView } from './realtime.types';
 
 function commandFingerprint(command: LudoRuntimeCommand & { matchId: string }): string {
   return JSON.stringify(command);
@@ -44,6 +44,21 @@ export class LudoRuntimeService {
     const state = await this.ensureSnapshot(matchId);
     await this.repository.refreshSnapshotTtl(matchId);
     return state;
+  }
+
+  async getParticipantViews(matchId: string, state: LudoMatchRuntimeState): Promise<LudoMatchParticipantView[]> {
+    const rows = await this.prisma.matchParticipant.findMany({
+      where: { matchId },
+      orderBy: { seat: 'asc' },
+      include: { user: { select: { id: true, fullName: true } } },
+    });
+
+    return rows.map((participant) => ({
+      userId: participant.userId,
+      fullName: participant.user.fullName,
+      seat: participant.seat,
+      color: state.game.players.find((player) => player.userId === participant.userId)?.color ?? null,
+    }));
   }
 
   getStoredSnapshot(matchId: string): Promise<LudoMatchRuntimeState | null> {

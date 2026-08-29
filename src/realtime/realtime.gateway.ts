@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { Server } from 'socket.io';
 import { LudoRuntimeCommand } from '../games/ludo/runtime';
 import { JoinMatchmakingDto } from '../matchmaking/dto/join-matchmaking.dto';
+import { ListMatchmakingDto } from '../matchmaking/dto/list-matchmaking.dto';
 import { MatchmakingService } from '../matchmaking/matchmaking.service';
 import { MatchJoinDto, LudoCommandDto, LudoMoveCommandDto } from './dto/ludo-command.dto';
 import { LudoRuntimeService } from './ludo-runtime.service';
@@ -84,7 +85,8 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       const state = await this.ludoRuntime.getSnapshot(dto.matchId, user.id);
       await socket.join(this.publisher.matchRoom(dto.matchId));
       const timing = await this.timeouts.onMatchJoined(dto.matchId, user.id, state);
-      return { ok: true, state, timing, version: state.game.version };
+      const participants = await this.ludoRuntime.getParticipantViews(dto.matchId, state);
+      return { ok: true, state, timing, version: state.game.version, participants };
     } catch (error) {
       return this.errorAck(error);
     }
@@ -99,7 +101,8 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       const user = this.requireUser(socket);
       const state = await this.ludoRuntime.getSnapshot(dto.matchId, user.id);
       const timing = await this.timeouts.getTiming(dto.matchId, state);
-      return { ok: true, state, timing, version: state.game.version };
+      const participants = await this.ludoRuntime.getParticipantViews(dto.matchId, state);
+      return { ok: true, state, timing, version: state.game.version, participants };
     } catch (error) {
       return this.errorAck(error);
     }
@@ -133,17 +136,62 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     try {
       const user = this.requireUser(socket);
       const result = await this.matchmaking.join(user.id, dto);
-      if (result.status === 'QUEUED') return { ok: true, ...result };
-
-      for (const matchedUserId of result.userIds) {
-        this.publisher.publishUser(
-          matchedUserId,
-          'matchmaking:matched',
-          { match: result.match, gameModeId: result.gameModeId },
-          result.match.id,
-        );
+      if (result.status === 'MATCHED') {
+        for (const matchedUserId of result.userIds) {
+          this.publisher.publishUser(
+            matchedUserId,
+            'matchmaking:matched',
+            { match: result.match, gameModeId: result.gameModeId },
+            result.match.id,
+          );
+        }
       }
+
+      const lobbyModeId = result.status === 'MATCHED' ? result.gameModeId : dto.gameModeId;
+      await this.broadcastLobbyUpdate(lobbyModeId);
       return { ok: true, ...result };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('matchmaking:list')
+  async listMatchmaking(
+    @ConnectedSocket() socket: AuthenticatedSocket,
+    @MessageBody() dto: ListMatchmakingDto,
+  ): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      const result = await this.matchmaking.list(dto.gameModeId, user.id);
+      return { ok: true, gameModeId: dto.gameModeId, ...result };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('matchmaking:subscribe')
+  async subscribeMatchmakingLobby(
+    @ConnectedSocket() socket: AuthenticatedSocket,
+    @MessageBody() dto: ListMatchmakingDto,
+  ): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      await socket.join(this.publisher.lobbyRoom(dto.gameModeId));
+      const payload = await this.matchmaking.buildLobbyPayload(dto.gameModeId, user.id);
+      return { ok: true, ...payload };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('matchmaking:unsubscribe')
+  async unsubscribeMatchmakingLobby(
+    @ConnectedSocket() socket: AuthenticatedSocket,
+    @MessageBody() dto: ListMatchmakingDto,
+  ): Promise<any> {
+    try {
+      await socket.leave(this.publisher.lobbyRoom(dto.gameModeId));
+      return { ok: true };
     } catch (error) {
       return this.errorAck(error);
     }
@@ -153,7 +201,12 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   async cancelMatchmaking(@ConnectedSocket() socket: AuthenticatedSocket): Promise<any> {
     try {
       const user = this.requireUser(socket);
-      return { ok: true, ...(await this.matchmaking.cancel(user.id)) };
+      const status = await this.matchmaking.status(user.id);
+      const result = await this.matchmaking.cancel(user.id);
+      if (status.status === 'QUEUED' && status.gameModeId) {
+        await this.broadcastLobbyUpdate(status.gameModeId);
+      }
+      return { ok: true, ...result };
     } catch (error) {
       return this.errorAck(error);
     }
@@ -216,6 +269,17 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       ...(version !== undefined ? { version } : {}),
       data,
     };
+  }
+
+  private async broadcastLobbyUpdate(gameModeId: string): Promise<void> {
+    const room = this.publisher.lobbyRoom(gameModeId);
+    const sockets = await this.server.in(room).fetchSockets();
+    for (const remoteSocket of sockets) {
+      const socket = remoteSocket as unknown as AuthenticatedSocket;
+      const userId = socket.data?.user?.id;
+      const payload = await this.matchmaking.buildLobbyPayload(gameModeId, userId);
+      remoteSocket.emit('matchmaking:lobby_updated', this.envelope(payload));
+    }
   }
 
   private errorAck(error: unknown): any {

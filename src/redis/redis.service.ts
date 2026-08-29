@@ -8,6 +8,11 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { createClient } from 'redis';
+import {
+  assertProductionRedisUrl,
+  buildRedisClientOptions,
+  redisHostForLogs,
+} from '../config/redis-client.util';
 import { AppEnv } from '../config/env';
 
 type RedisClient = ReturnType<typeof createClient>;
@@ -22,7 +27,13 @@ export class RedisService implements OnModuleInit, OnApplicationShutdown {
   constructor(private readonly config: ConfigService<AppEnv, true>) {
     this.prefix = config.get('REDIS_KEY_PREFIX', { infer: true });
     this.lockTtlMs = config.get('REDIS_LOCK_TTL_MS', { infer: true });
-    this.client = createClient({ url: config.get('REDIS_URL', { infer: true }) });
+
+    const nodeEnv = config.get('NODE_ENV', { infer: true });
+    const redisUrl = config.get('REDIS_URL', { infer: true });
+    assertProductionRedisUrl(redisUrl, nodeEnv);
+    this.logger.log(`Connecting to Redis host ${redisHostForLogs(redisUrl)} (${nodeEnv})`);
+
+    this.client = createClient(buildRedisClientOptions(redisUrl));
     this.client.on('error', (error) => this.logger.error(`Redis error: ${error.message}`));
   }
 

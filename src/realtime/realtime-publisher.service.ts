@@ -55,6 +55,10 @@ export class RealtimePublisherService {
     });
   }
 
+  lobbyRoom(gameModeId: string): string {
+    return `lobby:${gameModeId}`;
+  }
+
   userRoom(userId: string): string {
     return `user:${userId}`;
   }

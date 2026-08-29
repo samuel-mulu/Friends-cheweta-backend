@@ -43,8 +43,21 @@ export type CommandAck =
     };
 
 export type SnapshotAck =
-  | { ok: true; state: LudoMatchRuntimeState; timing: LudoTimingState; version: number }
+  | {
+      ok: true;
+      state: LudoMatchRuntimeState;
+      timing: LudoTimingState;
+      version: number;
+      participants: LudoMatchParticipantView[];
+    }
   | { ok: false; code: string; message: string };
+
+export type LudoMatchParticipantView = {
+  userId: string;
+  fullName: string;
+  seat: number;
+  color: string | null;
+};
 
 export type RuntimeExecution = {
   commandId: string;

@@ -155,6 +155,12 @@ export class MatchHistoryService {
     return {
       ...row,
       stakeAmountMinor: row.stakeAmountMinor?.toString?.() ?? row.stakeAmountMinor,
+      gameMode: row.gameMode
+        ? {
+            ...row.gameMode,
+            stakeAmountMinor: row.gameMode.stakeAmountMinor?.toString?.() ?? row.gameMode.stakeAmountMinor,
+          }
+        : row.gameMode,
       entries: row.entries?.map((entry: any) => ({ ...entry, amountMinor: entry.amountMinor.toString() })),
       settlement: row.settlement
         ? {
