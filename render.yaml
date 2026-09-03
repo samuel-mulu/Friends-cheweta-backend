@@ -59,8 +59,6 @@ services:
         value: "90"
       - key: LUDO_READY_NO_SHOW_SECONDS
         value: "180"
-      - key: ADMIN_FULL_NAME
-        value: Friends Admin
       - key: DATABASE_URL
         sync: false
       - key: DIRECT_DATABASE_URL
@@ -70,8 +68,4 @@ services:
       - key: JWT_REFRESH_SECRET
         sync: false
       - key: CORS_ORIGINS
-        sync: false
-      - key: ADMIN_PHONE
-        sync: false
-      - key: ADMIN_PASSWORD
         sync: false

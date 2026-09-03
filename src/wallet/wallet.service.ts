@@ -31,6 +31,54 @@ export class WalletService {
     return this.serializeWallet(await this.getByUserId(userId));
   }
 
+  async getAdminWallet(userId: string) {
+    const wallet = await this.prisma.wallet.findUnique({
+      where: { userId },
+      include: {
+        user: { select: { id: true, fullName: true, phoneNumber: true, status: true } },
+      },
+    });
+    if (!wallet) {
+      throw new NotFoundException({ code: 'WALLET_NOT_FOUND', message: 'Wallet not found.' });
+    }
+    return {
+      ...this.serializeWallet(wallet),
+      user: wallet.user,
+    };
+  }
+
+  async listAdminTransactions(params: {
+    type?: WalletTransactionType;
+    userId?: string;
+    limit?: number;
+  } = {}) {
+    const limit = Math.min(Math.max(params.limit ?? 100, 1), 100);
+    const rows = await this.prisma.walletTransaction.findMany({
+      where: {
+        ...(params.type ? { type: params.type } : {}),
+        ...(params.userId ? { wallet: { userId: params.userId } } : {}),
+      },
+      include: {
+        wallet: {
+          select: {
+            id: true,
+            currency: true,
+            user: { select: { id: true, fullName: true, phoneNumber: true } },
+          },
+        },
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+    });
+
+    return rows.map((row) => ({
+      ...this.serializeTransaction(row),
+      walletId: row.walletId,
+      currency: row.wallet.currency,
+      user: row.wallet.user,
+    }));
+  }
+
   async listTransactions(userId: string, limit: number, cursor?: string) {
     const wallet = await this.getByUserId(userId);
     const rows = await this.prisma.walletTransaction.findMany({

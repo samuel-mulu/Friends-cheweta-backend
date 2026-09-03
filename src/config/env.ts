@@ -21,10 +21,6 @@ const envSchema = z.object({
   LUDO_MAX_CONSECUTIVE_TIMEOUTS: z.coerce.number().int().min(1).max(10).default(3),
   LUDO_DISCONNECT_GRACE_SECONDS: z.coerce.number().int().min(15).max(600).default(90),
   LUDO_READY_NO_SHOW_SECONDS: z.coerce.number().int().min(30).max(1800).default(180),
-
-  ADMIN_FULL_NAME: z.string().optional(),
-  ADMIN_PHONE: z.string().optional(),
-  ADMIN_PASSWORD: z.string().optional(),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

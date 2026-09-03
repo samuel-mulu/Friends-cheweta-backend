@@ -5,40 +5,48 @@ import { PrismaClient } from '../src/generated/prisma/client';
 import { UserRole, UserStatus } from '../src/generated/prisma/enums';
 import { normalizeEthiopianPhone } from '../src/common/utils/phone.util';
 
+const ADMIN_ACCOUNTS = [
+  { fullName: 'Friends Admin 1', phone: '0911111111', password: '12345678' },
+  { fullName: 'Friends Admin 2', phone: '0911111112', password: '12345678' },
+] as const;
+
 async function main(): Promise<void> {
-  const fullName = process.env.ADMIN_FULL_NAME;
-  const phone = process.env.ADMIN_PHONE;
-  const password = process.env.ADMIN_PASSWORD;
   const databaseUrl = process.env.DATABASE_URL;
 
-  if (!fullName || !phone || !password || !databaseUrl) {
-    throw new Error('ADMIN_FULL_NAME, ADMIN_PHONE, ADMIN_PASSWORD and DATABASE_URL are required for seed.');
+  if (!databaseUrl) {
+    throw new Error('DATABASE_URL is required for seed.');
   }
 
   const adapter = new PrismaPg({ connectionString: databaseUrl });
   const prisma = new PrismaClient({ adapter });
 
   try {
-    const phoneNumber = normalizeEthiopianPhone(phone);
-    const passwordHash = await hash(password, 12);
+    const seededPhones: string[] = [];
 
-    await prisma.user.upsert({
-      where: { phoneNumber },
-      update: {
-        fullName,
-        passwordHash,
-        role: UserRole.ADMIN,
-        status: UserStatus.ACTIVE,
-      },
-      create: {
-        fullName,
-        phoneNumber,
-        passwordHash,
-        role: UserRole.ADMIN,
-        status: UserStatus.ACTIVE,
-        wallet: { create: {} },
-      },
-    });
+    for (const admin of ADMIN_ACCOUNTS) {
+      const phoneNumber = normalizeEthiopianPhone(admin.phone);
+      const passwordHash = await hash(admin.password, 12);
+
+      await prisma.user.upsert({
+        where: { phoneNumber },
+        update: {
+          fullName: admin.fullName,
+          passwordHash,
+          role: UserRole.ADMIN,
+          status: UserStatus.ACTIVE,
+        },
+        create: {
+          fullName: admin.fullName,
+          phoneNumber,
+          passwordHash,
+          role: UserRole.ADMIN,
+          status: UserStatus.ACTIVE,
+          wallet: { create: {} },
+        },
+      });
+
+      seededPhones.push(phoneNumber);
+    }
 
     const ludo = await prisma.game.upsert({
       where: { code: 'LUDO' },
@@ -83,7 +91,7 @@ async function main(): Promise<void> {
       });
     }
 
-    console.log(`Seeded admin ${phoneNumber} and Ludo game catalog.`);
+    console.log(`Seeded admins ${seededPhones.join(', ')} and Ludo game catalog.`);
   } finally {
     await prisma.$disconnect();
   }
