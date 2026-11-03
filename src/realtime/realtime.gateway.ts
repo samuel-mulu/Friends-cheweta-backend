@@ -1,4 +1,5 @@
-import { HttpException, Logger, UsePipes, ValidationPipe } from '@nestjs/common';
+import { ForbiddenException, HttpException, Logger, UsePipes, ValidationPipe } from '@nestjs/common';
+import { UserRole } from '../generated/prisma/enums';
 import {
   ConnectedSocket,
   MessageBody,
@@ -22,7 +23,7 @@ import { LobbyService } from '../lobby/lobby.service';
 import { MatchJoinDto, LudoCommandDto, LudoMoveCommandDto } from './dto/ludo-command.dto';
 import { LudoRuntimeService } from './ludo-runtime.service';
 import { PresenceService } from './presence.service';
-import { RealtimePublisherService } from './realtime-publisher.service';
+import { ADMIN_OPERATIONS_ROOM, RealtimePublisherService } from './realtime-publisher.service';
 import { RealtimeAuthService } from './realtime-auth.service';
 import { TurnTimeoutService } from './timeout/turn-timeout.service';
 import {
@@ -234,6 +235,18 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       const result = await this.challenge.cancel(user.id, dto.challengeId, dto.commandId);
       if (!result.duplicate) this.publisher.publishChallengeTransition(result);
       return { ok: true, commandId: dto.commandId, duplicate: result.duplicate };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('admin:join_operations')
+  async joinAdminOperations(@ConnectedSocket() socket: AuthenticatedSocket): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      if (user.role !== UserRole.ADMIN) throw new ForbiddenException({ code: 'ADMIN_ONLY', message: 'Admin access required.' });
+      await socket.join(ADMIN_OPERATIONS_ROOM);
+      return { ok: true };
     } catch (error) {
       return this.errorAck(error);
     }

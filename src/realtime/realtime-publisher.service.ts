@@ -22,6 +22,9 @@ export const LUDO_EVENT_NAMES: Record<string, string> = {
   MATCH_FINISHED: 'match:finished',
 };
 
+/** Admin dashboards receive a read-only copy of every authoritative match event. */
+export const ADMIN_OPERATIONS_ROOM = 'admin:operations';
+
 @Injectable()
 export class RealtimePublisherService {
   private server?: Server;
@@ -33,15 +36,18 @@ export class RealtimePublisherService {
   publishExecution(result: RuntimeExecution): void {
     if (!this.server || result.duplicate) return;
     for (const event of result.events) {
-      const eventName = LUDO_EVENT_NAMES[event.type] ?? 'ludo:event';
-      this.server.to(this.matchRoom(event.matchId)).emit(eventName, {
+      const envelope = {
         protocolVersion: REALTIME_PROTOCOL_VERSION,
         eventId: randomUUID(),
         serverTime: new Date().toISOString(),
         matchId: event.matchId,
         version: event.version,
         data: event,
-      });
+      };
+      this.server
+        .to(this.matchRoom(event.matchId))
+        .emit(LUDO_EVENT_NAMES[event.type] ?? 'ludo:event', envelope);
+      this.server.to(ADMIN_OPERATIONS_ROOM).emit('admin:match_event', envelope);
     }
   }
 
