@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
 import { PaymentStatus, WalletTransactionType } from '../generated/prisma/enums';
+import { withFinancialTiming } from '../common/utils/financial-instrumentation.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -65,30 +66,32 @@ export class PaymentsService {
     if (existing) return this.serializeWithdrawal(existing);
 
     try {
-      const withdrawal = await this.prisma.$transaction(async (tx) => {
-        const created = await tx.withdrawal.create({
-          data: {
+      const withdrawal = await withFinancialTiming(this.logger, 'WITHDRAWAL_CREATE', { userId }, () =>
+        this.prisma.$transaction(async (tx) => {
+          const created = await tx.withdrawal.create({
+            data: {
+              userId,
+              amountMinor,
+              channel: dto.channel,
+              destination: dto.destination.trim(),
+              idempotencyKey: dto.idempotencyKey.trim(),
+              note: dto.note?.trim() || null,
+            },
+          });
+
+          await this.walletService.lockFundsInTransaction(tx, {
             userId,
             amountMinor,
-            channel: dto.channel,
-            destination: dto.destination.trim(),
-            idempotencyKey: dto.idempotencyKey.trim(),
-            note: dto.note?.trim() || null,
-          },
-        });
+            type: WalletTransactionType.WITHDRAWAL_LOCK,
+            idempotencyKey: `withdrawal:lock:${created.id}`,
+            referenceType: 'WITHDRAWAL',
+            referenceId: created.id,
+            metadata: { action: 'LOCK_FOR_WITHDRAWAL' },
+          });
 
-        await this.walletService.lockFundsInTransaction(tx, {
-          userId,
-          amountMinor,
-          type: WalletTransactionType.WITHDRAWAL_LOCK,
-          idempotencyKey: `withdrawal:lock:${created.id}`,
-          referenceType: 'WITHDRAWAL',
-          referenceId: created.id,
-          metadata: { action: 'LOCK_FOR_WITHDRAWAL' },
-        });
-
-        return created;
-      });
+          return created;
+        }),
+      );
 
       return this.serializeWithdrawal(withdrawal);
     } catch (error) {
@@ -145,24 +148,26 @@ export class PaymentsService {
       throw new ConflictException({ code: 'DEPOSIT_NOT_PENDING', message: 'Deposit is not pending.' });
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      const changed = await tx.deposit.updateMany({
-        where: { id, status: PaymentStatus.PENDING },
-        data: { status: PaymentStatus.APPROVED, reviewedByUserId: adminUserId, reviewedAt: new Date() },
-      });
-      if (changed.count !== 1) {
-        throw new ConflictException({ code: 'DEPOSIT_ALREADY_REVIEWED', message: 'Deposit was already reviewed.' });
-      }
+    await withFinancialTiming(this.logger, 'DEPOSIT_APPROVAL', { depositId: id }, () =>
+      this.prisma.$transaction(async (tx) => {
+        const changed = await tx.deposit.updateMany({
+          where: { id, status: PaymentStatus.PENDING },
+          data: { status: PaymentStatus.APPROVED, reviewedByUserId: adminUserId, reviewedAt: new Date() },
+        });
+        if (changed.count !== 1) {
+          throw new ConflictException({ code: 'DEPOSIT_ALREADY_REVIEWED', message: 'Deposit was already reviewed.' });
+        }
 
-      await this.walletService.creditAvailableInTransaction(tx, {
-        userId: current.userId,
-        amountMinor: current.amountMinor,
-        type: WalletTransactionType.DEPOSIT,
-        idempotencyKey: `deposit:approve:${id}`,
-        referenceType: 'DEPOSIT',
-        referenceId: id,
-      });
-    });
+        await this.walletService.creditAvailableInTransaction(tx, {
+          userId: current.userId,
+          amountMinor: current.amountMinor,
+          type: WalletTransactionType.DEPOSIT,
+          idempotencyKey: `deposit:approve:${id}`,
+          referenceType: 'DEPOSIT',
+          referenceId: id,
+        });
+      }),
+    );
 
     const result = this.serializeDeposit(await this.getDeposit(id));
     await this.paymentFollowUp(current.userId, adminUserId, 'DEPOSIT_APPROVED', id, 'Deposit approved', 'Your deposit was approved.');
@@ -200,25 +205,27 @@ export class PaymentsService {
       throw new ConflictException({ code: 'WITHDRAWAL_NOT_PENDING', message: 'Withdrawal is not pending.' });
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      const changed = await tx.withdrawal.updateMany({
-        where: { id, status: PaymentStatus.PENDING },
-        data: { status: PaymentStatus.APPROVED, reviewedByUserId: adminUserId, reviewedAt: new Date() },
-      });
-      if (changed.count !== 1) {
-        throw new ConflictException({ code: 'WITHDRAWAL_ALREADY_REVIEWED', message: 'Withdrawal was already reviewed.' });
-      }
+    await withFinancialTiming(this.logger, 'WITHDRAWAL_APPROVAL', { withdrawalId: id }, () =>
+      this.prisma.$transaction(async (tx) => {
+        const changed = await tx.withdrawal.updateMany({
+          where: { id, status: PaymentStatus.PENDING },
+          data: { status: PaymentStatus.APPROVED, reviewedByUserId: adminUserId, reviewedAt: new Date() },
+        });
+        if (changed.count !== 1) {
+          throw new ConflictException({ code: 'WITHDRAWAL_ALREADY_REVIEWED', message: 'Withdrawal was already reviewed.' });
+        }
 
-      await this.walletService.debitLockedInTransaction(tx, {
-        userId: current.userId,
-        amountMinor: current.amountMinor,
-        type: WalletTransactionType.WITHDRAWAL_PAYOUT,
-        idempotencyKey: `withdrawal:approve:${id}`,
-        referenceType: 'WITHDRAWAL',
-        referenceId: id,
-        metadata: { action: 'PAYOUT_APPROVED' },
-      });
-    });
+        await this.walletService.debitLockedInTransaction(tx, {
+          userId: current.userId,
+          amountMinor: current.amountMinor,
+          type: WalletTransactionType.WITHDRAWAL_PAYOUT,
+          idempotencyKey: `withdrawal:approve:${id}`,
+          referenceType: 'WITHDRAWAL',
+          referenceId: id,
+          metadata: { action: 'PAYOUT_APPROVED' },
+        });
+      }),
+    );
 
     const result = this.serializeWithdrawal(await this.getWithdrawal(id));
     await this.paymentFollowUp(current.userId, adminUserId, 'WITHDRAWAL_APPROVED', id, 'Withdrawal approved', 'Your withdrawal was approved.');
@@ -232,30 +239,32 @@ export class PaymentsService {
       throw new ConflictException({ code: 'WITHDRAWAL_NOT_PENDING', message: 'Withdrawal is not pending.' });
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      const changed = await tx.withdrawal.updateMany({
-        where: { id, status: PaymentStatus.PENDING },
-        data: {
-          status: PaymentStatus.REJECTED,
-          reviewedByUserId: adminUserId,
-          reviewedAt: new Date(),
-          rejectionReason: reason.trim(),
-        },
-      });
-      if (changed.count !== 1) {
-        throw new ConflictException({ code: 'WITHDRAWAL_ALREADY_REVIEWED', message: 'Withdrawal was already reviewed.' });
-      }
+    await withFinancialTiming(this.logger, 'WITHDRAWAL_REJECTION', { withdrawalId: id }, () =>
+      this.prisma.$transaction(async (tx) => {
+        const changed = await tx.withdrawal.updateMany({
+          where: { id, status: PaymentStatus.PENDING },
+          data: {
+            status: PaymentStatus.REJECTED,
+            reviewedByUserId: adminUserId,
+            reviewedAt: new Date(),
+            rejectionReason: reason.trim(),
+          },
+        });
+        if (changed.count !== 1) {
+          throw new ConflictException({ code: 'WITHDRAWAL_ALREADY_REVIEWED', message: 'Withdrawal was already reviewed.' });
+        }
 
-      await this.walletService.releaseFundsInTransaction(tx, {
-        userId: current.userId,
-        amountMinor: current.amountMinor,
-        type: WalletTransactionType.WITHDRAWAL_RELEASE,
-        idempotencyKey: `withdrawal:reject:${id}`,
-        referenceType: 'WITHDRAWAL',
-        referenceId: id,
-        metadata: { action: 'RELEASE_REJECTED_WITHDRAWAL' },
-      });
-    });
+        await this.walletService.releaseFundsInTransaction(tx, {
+          userId: current.userId,
+          amountMinor: current.amountMinor,
+          type: WalletTransactionType.WITHDRAWAL_RELEASE,
+          idempotencyKey: `withdrawal:reject:${id}`,
+          referenceType: 'WITHDRAWAL',
+          referenceId: id,
+          metadata: { action: 'RELEASE_REJECTED_WITHDRAWAL' },
+        });
+      }),
+    );
 
     const result = this.serializeWithdrawal(await this.getWithdrawal(id));
     await this.paymentFollowUp(current.userId, adminUserId, 'WITHDRAWAL_REJECTED', id, 'Withdrawal rejected', 'Your withdrawal was rejected.');

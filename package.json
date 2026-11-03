@@ -7,8 +7,9 @@
   "scripts": {
     "build": "nest build",
     "start": "nest start",
-    "start:dev": "nest start --watch",
-    "start:prod": "node dist/src/main.js",
+    "start:dev": "node --watch -r ts-node/register src/main.ts",
+    "start:dev:dist": "nest start --watch",
+    "start:prod": "node dist/main.js",
     "lint": "eslint \"{src,test,prisma}/**/*.ts\" --fix",
     "test": "jest",
     "test:watch": "jest --watch",

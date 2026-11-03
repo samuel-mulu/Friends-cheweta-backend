@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
 import { GameEntryModule } from '../game-entry/game-entry.module';
+import { ChallengeModule } from '../challenge/challenge.module';
+import { ChatModule } from '../chat/chat.module';
+import { LobbyModule } from '../lobby/lobby.module';
 import { MatchmakingModule } from '../matchmaking/matchmaking.module';
 import { MatchHistoryModule } from '../match-history/match-history.module';
 import { SettlementModule } from '../settlement/settlement.module';
@@ -13,7 +16,7 @@ import { RealtimeMaintenanceService } from './timeout/realtime-maintenance.servi
 import { TurnTimeoutService } from './timeout/turn-timeout.service';
 
 @Module({
-  imports: [MatchmakingModule, GameEntryModule, SettlementModule, MatchHistoryModule],
+  imports: [MatchmakingModule, LobbyModule, ChallengeModule, ChatModule, GameEntryModule, SettlementModule, MatchHistoryModule],
   providers: [
     RealtimeGateway,
     RealtimeAuthService,

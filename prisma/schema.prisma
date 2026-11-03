@@ -223,6 +223,9 @@ model Match {
   rulesVersion     String
   stakeAmountMinor BigInt
   platformFeeBps   Int
+  sessionCode      String?     @unique
+  challengeId      String?     @unique
+  source           String?
   matchmakingKey  String?     @unique
   entrySecuredAt   DateTime?
   cancelledAt      DateTime?
@@ -245,6 +248,7 @@ model Match {
 
   @@index([gameId, status, createdAt])
   @@index([gameModeId, status, createdAt])
+  @@index([status, updatedAt])
 }
 
 model MatchParticipant {

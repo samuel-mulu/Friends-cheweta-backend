@@ -6,11 +6,15 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { MatchHistoryModule } from './match-history/match-history.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
+import { ChallengeModule } from './challenge/challenge.module';
+import { ChatModule } from './chat/chat.module';
 import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
 import { validateEnv } from './config/env';
 import { GamingModule } from './gaming/gaming.module';
 import { HealthModule } from './health/health.module';
 import { GameEntryModule } from './game-entry/game-entry.module';
+import { LobbyModule } from './lobby/lobby.module';
+import { MatchCreationModule } from './match-creation/match-creation.module';
 import { SettlementModule } from './settlement/settlement.module';
 import { PaymentsModule } from './payments/payments.module';
 import { MatchmakingModule } from './matchmaking/matchmaking.module';
@@ -35,6 +39,10 @@ import { WalletModule } from './wallet/wallet.module';
     AuditModule,
     PaymentsModule,
     GamingModule,
+    LobbyModule,
+    MatchCreationModule,
+    ChallengeModule,
+    ChatModule,
     GameEntryModule,
     SettlementModule,
     MatchmakingModule,

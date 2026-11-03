@@ -77,9 +77,17 @@ export class RedisService implements OnModuleInit, OnApplicationShutdown {
     key: string,
     action: () => Promise<T>,
     ttlMs = this.lockTtlMs,
+    waitMs = 0,
   ): Promise<T> {
     const token = randomUUID();
-    const acquired = await this.client.set(key, token, { NX: true, PX: ttlMs });
+    const deadline = Date.now() + waitMs;
+    let acquired = await this.client.set(key, token, { NX: true, PX: ttlMs });
+
+    while (acquired !== 'OK' && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      acquired = await this.client.set(key, token, { NX: true, PX: ttlMs });
+    }
+
     if (acquired !== 'OK') {
       throw new ServiceUnavailableException({
         code: 'RESOURCE_BUSY',

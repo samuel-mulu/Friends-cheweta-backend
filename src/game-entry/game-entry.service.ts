@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
@@ -10,18 +11,22 @@ import {
   MatchStatus,
   WalletTransactionType,
 } from '../generated/prisma/enums';
+import { withFinancialTiming } from '../common/utils/financial-instrumentation.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
 
 @Injectable()
 export class GameEntryService {
+  private readonly logger = new Logger(GameEntryService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly wallet: WalletService,
   ) {}
 
   async secureParticipantEntry(matchId: string, userId: string) {
-    return this.prisma.$transaction(async (tx) => {
+    return withFinancialTiming(this.logger, 'GAME_ENTRY', { matchId, userId }, () =>
+      this.prisma.$transaction(async (tx) => {
       const match = await tx.match.findUnique({
         where: { id: matchId },
         include: { participants: { orderBy: { seat: 'asc' } }, entries: true, gameMode: true },
@@ -89,11 +94,13 @@ export class GameEntryService {
       }
 
       return this.serializeParticipantEntry(matchId, entries, match.entrySecuredAt);
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }),
+    );
   }
 
   async secureMatchEntry(matchId: string) {
-    return this.prisma.$transaction(async (tx) => {
+    return withFinancialTiming(this.logger, 'GAME_ENTRY', { matchId }, () =>
+      this.prisma.$transaction(async (tx) => {
       const match = await tx.match.findUnique({
         where: { id: matchId },
         include: { participants: { orderBy: { seat: 'asc' } }, entries: true },
@@ -172,7 +179,8 @@ export class GameEntryService {
       await tx.match.update({ where: { id: matchId }, data: { status: MatchStatus.READY } });
       const secured = await tx.match.findUniqueOrThrow({ where: { id: matchId }, select: { entrySecuredAt: true } });
       return this.serialize(matchId, entries, secured.entrySecuredAt!);
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }),
+    );
   }
 
   async assertSecured(matchId: string): Promise<void> {
@@ -189,12 +197,17 @@ export class GameEntryService {
     }
   }
 
-  async cancelAndRefund(matchId: string, reason: string) {
+  async cancelAndRefund(
+    matchId: string,
+    reason: string,
+    options?: { expectedStatuses?: MatchStatus[] },
+  ) {
     if (!reason.trim()) {
       throw new BadRequestException({ code: 'CANCELLATION_REASON_REQUIRED', message: 'Cancellation reason is required.' });
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return withFinancialTiming(this.logger, 'GAME_ENTRY_REFUND', { matchId }, () =>
+      this.prisma.$transaction(async (tx) => {
       const match = await tx.match.findUnique({
         where: { id: matchId },
         include: { entries: true },
@@ -210,6 +223,9 @@ export class GameEntryService {
           code: 'MATCH_CANNOT_BE_CANCELLED',
           message: 'A started or finished match cannot use pre-game cancellation.',
         });
+      }
+      if (options?.expectedStatuses && !options.expectedStatuses.includes(match.status)) {
+        return { matchId, status: match.status, refunded: false, skipped: true as const };
       }
 
       for (const entry of match.entries) {
@@ -240,7 +256,8 @@ export class GameEntryService {
         },
       });
       return { matchId, status: MatchStatus.CANCELLED, refunded: true };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }),
+    );
   }
 
   private serialize(matchId: string, entries: Array<{ userId: string; amountMinor: bigint; status: MatchEntryStatus }>, securedAt: Date | null) {

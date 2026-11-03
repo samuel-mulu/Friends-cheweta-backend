@@ -4,6 +4,10 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(5000),
   DATABASE_URL: z.string().min(1),
+  // DB7: explicit connection pool ceiling instead of relying on node-postgres's
+  // implicit default (10). 15 is a deliberate, modest starting point - not an
+  // automatic jump to 50/100 "just in case".
+  DATABASE_POOL_MAX: z.coerce.number().int().min(2).max(30).default(15),
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
   JWT_ACCESS_TTL: z.string().default('15m'),
@@ -21,6 +25,8 @@ const envSchema = z.object({
   LUDO_MAX_CONSECUTIVE_TIMEOUTS: z.coerce.number().int().min(1).max(10).default(3),
   LUDO_DISCONNECT_GRACE_SECONDS: z.coerce.number().int().min(15).max(600).default(90),
   LUDO_READY_NO_SHOW_SECONDS: z.coerce.number().int().min(30).max(1800).default(180),
+  /** Abandoned CREATED/WAITING matches older than matchmaking queue TTL are cancelled/refunded. */
+  PREMATCH_ORPHAN_TIMEOUT_SECONDS: z.coerce.number().int().min(60).max(3600).default(600),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

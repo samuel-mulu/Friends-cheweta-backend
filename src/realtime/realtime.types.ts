@@ -49,6 +49,7 @@ export type SnapshotAck =
       timing: LudoTimingState;
       version: number;
       participants: LudoMatchParticipantView[];
+      recentMessages?: unknown[];
     }
   | { ok: false; code: string; message: string };
 

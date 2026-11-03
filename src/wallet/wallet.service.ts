@@ -162,6 +162,15 @@ export class WalletService {
     }
   }
 
+  // DB2: this intentionally issues exactly 4 queries - (1) idempotency
+  // lookup, (2) wallet lookup (also gives us the before-balances), (3) the
+  // guarded conditional update (the sole correctness guard - double-spend
+  // protection lives entirely in this WHERE clause + the count===1 check),
+  // (4) the ledger insert. The after-balances are derived arithmetically
+  // from the before-balances we already have plus the known delta, which
+  // removes a previously-redundant post-update re-read without weakening
+  // the guard: the guarded `updateMany` is still the only thing that
+  // decides whether the mutation succeeded.
   private async mutateWithClient(
     db: WalletDbClient,
     input: WalletMutationInput,
@@ -203,9 +212,10 @@ export class WalletService {
       });
     }
 
-    const after = await db.wallet.findUniqueOrThrow({ where: { id: wallet.id } });
-    const beforeAvailable = after.availableBalance - availableDelta;
-    const beforeLocked = after.lockedBalance - lockedDelta;
+    const beforeAvailable = wallet.availableBalance;
+    const beforeLocked = wallet.lockedBalance;
+    const afterAvailable = beforeAvailable + availableDelta;
+    const afterLocked = beforeLocked + lockedDelta;
 
     return db.walletTransaction.create({
       data: {
@@ -215,9 +225,9 @@ export class WalletService {
         availableDelta,
         lockedDelta,
         availableBalanceBefore: beforeAvailable,
-        availableBalanceAfter: after.availableBalance,
+        availableBalanceAfter: afterAvailable,
         lockedBalanceBefore: beforeLocked,
-        lockedBalanceAfter: after.lockedBalance,
+        lockedBalanceAfter: afterLocked,
         referenceType: input.referenceType,
         referenceId: input.referenceId,
         idempotencyKey: input.idempotencyKey,

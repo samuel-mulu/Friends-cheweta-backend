@@ -11,7 +11,13 @@ import {
 } from '@nestjs/websockets';
 import { randomUUID } from 'node:crypto';
 import { Server } from 'socket.io';
+import { ChallengeService } from '../challenge/challenge.service';
+import { ChallengeCommandDto, ChallengeCreateDto } from '../challenge/dto/challenge.dto';
+import { ChatService } from '../chat/chat.service';
+import { LobbyChatSendDto, MatchChatHistoryDto, MatchChatSendDto } from '../chat/dto/chat.dto';
 import { LudoRuntimeCommand } from '../games/ludo/runtime';
+import { LobbyCommandDto, LobbyJoinDto } from '../lobby/dto/lobby.dto';
+import { LobbyService } from '../lobby/lobby.service';
 import { JoinMatchmakingDto } from '../matchmaking/dto/join-matchmaking.dto';
 import { ListMatchmakingDto } from '../matchmaking/dto/list-matchmaking.dto';
 import { MatchmakingService } from '../matchmaking/matchmaking.service';
@@ -33,6 +39,7 @@ import {
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
 export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(RealtimeGateway.name);
+  private expiryTimer?: NodeJS.Timeout;
 
   @WebSocketServer()
   server!: Server;
@@ -42,12 +49,16 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     private readonly presence: PresenceService,
     private readonly ludoRuntime: LudoRuntimeService,
     private readonly matchmaking: MatchmakingService,
+    private readonly lobby: LobbyService,
+    private readonly challenge: ChallengeService,
+    private readonly chat: ChatService,
     private readonly publisher: RealtimePublisherService,
     private readonly timeouts: TurnTimeoutService,
   ) {}
 
   afterInit(server: Server): void {
     this.publisher.attach(server);
+    this.expiryTimer = setInterval(() => void this.expireChallenges(), 1000);
     this.logger.log('Realtime gateway initialized on namespace /game');
   }
 
@@ -60,6 +71,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       await this.timeouts.onConnected(user.id);
       socket.data.presenceTimer = setInterval(() => {
         void this.presence.heartbeat(user.id, socket.id);
+        void this.lobby.touch(user.id).catch(() => undefined);
       }, 30_000);
       socket.emit('session:ready', this.envelope({ userId: user.id }));
     } catch (error) {
@@ -72,7 +84,161 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     if (socket.data.presenceTimer) clearInterval(socket.data.presenceTimer);
     if (!socket.data.user) return;
     const becameOffline = await this.presence.disconnected(socket.data.user.id, socket.id).catch(() => false);
-    if (becameOffline) await this.timeouts.onDisconnected(socket.data.user.id).catch(() => undefined);
+    if (becameOffline) {
+      await this.handleLobbyDisconnect(socket.data.user.id).catch(() => undefined);
+      await this.timeouts.onDisconnected(socket.data.user.id).catch(() => undefined);
+    }
+  }
+
+  @SubscribeMessage('lobby:join')
+  async joinLobby(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: LobbyJoinDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      const activeChallenge = await this.challenge.activeForUser(user.id);
+      const activeMatch = await this.lobby.activeMatchForUser(user.id);
+      if (activeMatch) {
+        await this.lobby.leave(user.id).catch(() => undefined);
+        return { ok: true, commandId: dto.commandId, data: { activeMatch } };
+      }
+      const recentMessages = await this.chat.getLobbyHistory(dto.gameModeId).catch(() => []);
+      const result = await this.lobby.join(user.id, dto.gameModeId, recentMessages);
+      if (result.previousGameModeId && result.previousGameModeId !== dto.gameModeId) {
+        await socket.leave(this.publisher.lobbyRoom(result.previousGameModeId));
+        this.server.to(this.publisher.lobbyRoom(result.previousGameModeId)).emit(
+          'lobby:player_left',
+          this.envelope({ gameModeId: result.previousGameModeId, player: result.player }),
+        );
+      }
+      await socket.join(this.publisher.lobbyRoom(dto.gameModeId));
+      this.server.to(this.publisher.lobbyRoom(dto.gameModeId)).emit(
+        'lobby:player_joined',
+        this.envelope({ gameModeId: dto.gameModeId, player: result.player }),
+      );
+      return { ok: true, commandId: dto.commandId, data: { ...result.snapshot, ...(activeChallenge ? { activeChallenge } : {}) } };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('lobby:ready')
+  async readyLobby(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: LobbyCommandDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      const result = await this.lobby.ready(user.id);
+      this.server.to(this.publisher.lobbyRoom(result.gameModeId)).emit(
+        'lobby:player_ready',
+        this.envelope({ gameModeId: result.gameModeId, player: result.player }),
+      );
+      return { ok: true, commandId: dto.commandId };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('lobby:unready')
+  async unreadyLobby(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: LobbyCommandDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      const result = await this.lobby.unready(user.id);
+      this.server.to(this.publisher.lobbyRoom(result.gameModeId)).emit(
+        'lobby:player_unready',
+        this.envelope({ gameModeId: result.gameModeId, player: result.player }),
+      );
+      return { ok: true, commandId: dto.commandId };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('lobby:leave')
+  async leaveLobby(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: LobbyCommandDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      const cancelled = await this.challenge.cancelForUser(user.id);
+      if (cancelled) await this.emitChallengeTerminal(cancelled, 'challenge:cancelled');
+      const result = await this.lobby.leave(user.id);
+      if (result.gameModeId) {
+        await socket.leave(this.publisher.lobbyRoom(result.gameModeId));
+        this.server.to(this.publisher.lobbyRoom(result.gameModeId)).emit(
+          'lobby:player_left',
+          this.envelope({ gameModeId: result.gameModeId, player: result.player }),
+        );
+      }
+      return { ok: true, commandId: dto.commandId };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('challenge:create')
+  async createChallenge(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: ChallengeCreateDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      const result = await this.challenge.create(user.id, dto.opponentUserId, dto.commandId);
+      const challenge = result.challenge;
+      for (const userId of [challenge.challengerId, challenge.opponentId]) {
+        this.server.to(this.publisher.lobbyRoom(challenge.gameModeId)).emit(
+          'lobby:player_busy',
+          this.envelope({ gameModeId: challenge.gameModeId, userId }),
+        );
+      }
+      this.publisher.publishUser(challenge.challengerId, 'challenge:created', challenge);
+      this.publisher.publishUser(challenge.opponentId, 'challenge:received', challenge);
+      return { ok: true, commandId: dto.commandId, duplicate: result.duplicate };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('lobby:chat:send')
+  async sendLobbyChat(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: LobbyChatSendDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      const result = await this.chat.sendLobbyMessage(user.id, dto.commandId, dto.text);
+      if (!result.duplicate) {
+        this.server.to(this.publisher.lobbyRoom(result.message.scopeId)).emit('lobby:chat:message', this.envelope(result.message));
+      }
+      return { ok: true, commandId: dto.commandId, duplicate: result.duplicate, data: result.message };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('challenge:accept')
+  async acceptChallenge(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: ChallengeCommandDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      const result = await this.challenge.accept(user.id, dto.challengeId, dto.commandId);
+      await this.emitChallengeTerminal(result.challenge, 'challenge:accepted');
+      return { ok: true, commandId: dto.commandId, duplicate: result.duplicate, data: result.challenge };
+    } catch (error) {
+      await this.emitAcceptFailureRecovery(error);
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('challenge:reject')
+  async rejectChallenge(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: ChallengeCommandDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      const result = await this.challenge.reject(user.id, dto.challengeId, dto.commandId);
+      await this.emitChallengeTerminal(result.challenge, 'challenge:rejected');
+      return { ok: true, commandId: dto.commandId, duplicate: result.duplicate };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('challenge:cancel')
+  async cancelChallenge(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: ChallengeCommandDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      const result = await this.challenge.cancel(user.id, dto.challengeId, dto.commandId);
+      await this.emitChallengeTerminal(result.challenge, 'challenge:cancelled');
+      return { ok: true, commandId: dto.commandId, duplicate: result.duplicate };
+    } catch (error) {
+      return this.errorAck(error);
+    }
   }
 
   @SubscribeMessage('match:join')
@@ -86,7 +252,33 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       await socket.join(this.publisher.matchRoom(dto.matchId));
       const timing = await this.timeouts.onMatchJoined(dto.matchId, user.id, state);
       const participants = await this.ludoRuntime.getParticipantViews(dto.matchId, state);
-      return { ok: true, state, timing, version: state.game.version, participants };
+      const recentMessages = await this.chat.getMatchHistory(dto.matchId).catch(() => []);
+      return { ok: true, state, timing, version: state.game.version, participants, recentMessages };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('match:chat:send')
+  async sendMatchChat(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: MatchChatSendDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      const result = await this.chat.sendMatchMessage(user.id, dto.matchId, dto.commandId, dto.text);
+      if (!result.duplicate) {
+        this.server.to(this.publisher.matchRoom(dto.matchId)).emit('match:chat:message', this.envelope(result.message, dto.matchId));
+      }
+      return { ok: true, commandId: dto.commandId, duplicate: result.duplicate, data: result.message };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('match:chat:history')
+  async matchChatHistory(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: MatchChatHistoryDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      const messages = await this.chat.getMatchHistoryForUser(user.id, dto.matchId);
+      return { ok: true, messages };
     } catch (error) {
       return this.errorAck(error);
     }
@@ -279,6 +471,78 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       const userId = socket.data?.user?.id;
       const payload = await this.matchmaking.buildLobbyPayload(gameModeId, userId);
       remoteSocket.emit('matchmaking:lobby_updated', this.envelope(payload));
+    }
+  }
+
+  private async expireChallenges(): Promise<void> {
+    const expired = await this.challenge.expireDue().catch(() => []);
+    for (const challenge of expired) await this.emitChallengeTerminal(challenge, 'challenge:expired');
+  }
+
+  private async handleLobbyDisconnect(userId: string): Promise<void> {
+    const cancelled = await this.challenge.cancelForUser(userId);
+    if (cancelled) await this.emitChallengeTerminal(cancelled, 'challenge:cancelled');
+    const left = await this.lobby.leave(userId);
+    if (left.gameModeId) {
+      this.server.to(this.publisher.lobbyRoom(left.gameModeId)).emit(
+        'lobby:player_left',
+        this.envelope({ gameModeId: left.gameModeId, player: left.player }),
+      );
+    }
+  }
+
+  private async emitChallengeTerminal(challenge: any, eventName: string): Promise<void> {
+    this.publisher.publishUser(challenge.challengerId, eventName, challenge);
+    this.publisher.publishUser(challenge.opponentId, eventName, challenge);
+    if (eventName === 'challenge:accepted') {
+      if (challenge.match) {
+        this.publisher.publishUser(challenge.challengerId, 'match:ready', { match: challenge.match }, challenge.match.id);
+        this.publisher.publishUser(challenge.opponentId, 'match:ready', { match: challenge.match }, challenge.match.id);
+      }
+      for (const userId of [challenge.challengerId, challenge.opponentId]) {
+        this.server.to(this.publisher.lobbyRoom(challenge.gameModeId)).emit(
+          'lobby:player_left',
+          this.envelope({ gameModeId: challenge.gameModeId, player: { userId } }),
+        );
+      }
+    } else {
+      const restored = await this.lobby.restoreReady([challenge.challengerId, challenge.opponentId], challenge.gameModeId);
+      for (const player of restored) {
+        this.server.to(this.publisher.lobbyRoom(challenge.gameModeId)).emit(
+          'lobby:player_available',
+          this.envelope({ gameModeId: challenge.gameModeId, player }),
+        );
+      }
+    }
+  }
+
+  private async emitAcceptFailureRecovery(error: unknown): Promise<void> {
+    const recovery = (error as { lobbyRecovery?: {
+      gameModeId: string;
+      challenge: any;
+      available: Array<{ userId: string }>;
+      leftUserIds: string[];
+    } })?.lobbyRecovery;
+    if (!recovery) return;
+
+    this.publisher.publishUser(recovery.challenge.challengerId, 'challenge:cancelled', recovery.challenge);
+    this.publisher.publishUser(recovery.challenge.opponentId, 'challenge:cancelled', recovery.challenge);
+
+    for (const player of recovery.available) {
+      this.server.to(this.publisher.lobbyRoom(recovery.gameModeId)).emit(
+        'lobby:player_available',
+        this.envelope({ gameModeId: recovery.gameModeId, player }),
+      );
+    }
+    for (const userId of recovery.leftUserIds) {
+      this.server.to(this.publisher.lobbyRoom(recovery.gameModeId)).emit(
+        'lobby:player_left',
+        this.envelope({ gameModeId: recovery.gameModeId, player: { userId } }),
+      );
+      const activeMatch = await this.lobby.activeMatchForUser(userId).catch(() => null);
+      if (activeMatch) {
+        this.publisher.publishUser(userId, 'match:ready', { match: activeMatch }, activeMatch.id);
+      }
     }
   }
 

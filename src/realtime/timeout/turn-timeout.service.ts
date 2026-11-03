@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppEnv } from '../../config/env';
+import { PREMATCH_ORPHAN_STATUSES } from '../../common/match-status';
 import { MatchStatus } from '../../generated/prisma/enums';
 import { LudoMatchPhase, LudoTurnPhase } from '../../games/ludo/domain';
 import { LudoRuntimeCommand, LudoMatchRuntimeState } from '../../games/ludo/runtime';
@@ -18,6 +19,7 @@ export class TurnTimeoutService {
   private readonly maxConsecutiveTimeouts: number;
   private readonly disconnectGraceSeconds: number;
   private readonly readyNoShowSeconds: number;
+  private readonly prematchOrphanTimeoutSeconds: number;
 
   constructor(
     private readonly redis: RedisService,
@@ -31,6 +33,7 @@ export class TurnTimeoutService {
     this.maxConsecutiveTimeouts = config.get('LUDO_MAX_CONSECUTIVE_TIMEOUTS', { infer: true });
     this.disconnectGraceSeconds = config.get('LUDO_DISCONNECT_GRACE_SECONDS', { infer: true });
     this.readyNoShowSeconds = config.get('LUDO_READY_NO_SHOW_SECONDS', { infer: true });
+    this.prematchOrphanTimeoutSeconds = config.get('PREMATCH_ORPHAN_TIMEOUT_SECONDS', { infer: true });
   }
 
   async onMatchJoined(matchId: string, userId: string, state: LudoMatchRuntimeState): Promise<LudoTimingState> {
@@ -194,6 +197,57 @@ export class TurnTimeoutService {
         this.logger.warn(`Ready no-show cleanup failed for ${match.id}: ${(error as Error).message}`);
       }
     }
+  }
+
+  /**
+   * Cancel abandoned CREATED/WAITING commitments that never started or secured.
+   * Aligns with Quick Match Redis TTL so live open slots are not raced.
+   */
+  async processPrematchOrphans(): Promise<number> {
+    const cutoff = new Date(Date.now() - this.prematchOrphanTimeoutSeconds * 1000);
+    const candidates = await this.prisma.match.findMany({
+      where: {
+        status: { in: PREMATCH_ORPHAN_STATUSES },
+        createdAt: { lt: cutoff },
+        startedAt: null,
+        entrySecuredAt: null,
+      },
+      select: { id: true },
+      take: 25,
+      orderBy: { createdAt: 'asc' },
+    });
+
+    let cancelled = 0;
+    for (const candidate of candidates) {
+      try {
+        const result = await this.gameEntry.cancelAndRefund(candidate.id, 'PREMATCH_ORPHAN_TIMEOUT', {
+          expectedStatuses: PREMATCH_ORPHAN_STATUSES,
+        });
+        if ('skipped' in result && result.skipped) continue;
+        if (!result.refunded) continue;
+        cancelled += 1;
+        this.logger.log(`prematch_orphan_cancelled match=${candidate.id}`);
+        const players = await this.prisma.matchParticipant.findMany({
+          where: { matchId: candidate.id },
+          select: { userId: true },
+        });
+        const cleanup = this.redis.raw().multi();
+        for (const player of players) {
+          cleanup.del(this.redis.key('matchmaking', 'assignment', player.userId));
+          cleanup.del(this.redis.key('matchmaking', 'user', player.userId));
+          this.publisher.publishUser(
+            player.userId,
+            'match:cancelled',
+            { matchId: candidate.id, reason: 'PREMATCH_ORPHAN_TIMEOUT' },
+            candidate.id,
+          );
+        }
+        await cleanup.exec();
+      } catch (error) {
+        this.logger.warn(`Prematch orphan cleanup failed for ${candidate.id}: ${(error as Error).message}`);
+      }
+    }
+    return cancelled;
   }
 
   private async processTurnTimeout(matchId: string, now: number): Promise<void> {

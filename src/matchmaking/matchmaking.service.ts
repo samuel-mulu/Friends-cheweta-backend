@@ -2,10 +2,12 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
+import { COMMITTED_MATCH_STATUSES } from '../common/match-status';
 import { AppEnv } from '../config/env';
 import { MatchEntryStatus, MatchStatus, UserStatus } from '../generated/prisma/enums';
 import { GameEntryService } from '../game-entry/game-entry.service';
@@ -22,6 +24,8 @@ import {
 
 @Injectable()
 export class MatchmakingService {
+  private readonly logger = new Logger(MatchmakingService.name);
+  private readonly readyLobbyLimit = 100;
   private readonly queueTtlSeconds: number;
 
   constructor(
@@ -63,8 +67,9 @@ export class MatchmakingService {
     return this.redis.withLock(this.queueLockKey(entry.gameModeId), async () => {
       await this.removeReadyEntry(entry, userId);
       await this.gameEntry.cancelAndRefund(entry.matchId, 'READY_CANCELLED_BY_PLAYER').catch(() => undefined);
+      this.logger.log(`lobby:cancel user=${userId} mode=${entry.gameModeId} ticket=${entry.ticketId} match=${entry.matchId}`);
       return { success: true };
-    });
+    }, 10000, 2500);
   }
 
   async status(userId: string): Promise<any> {
@@ -149,9 +154,7 @@ export class MatchmakingService {
       tx.zAdd(this.queueKey(mode.id), [{ score: entry.readyAtMs, value: entry.ticketId }]);
       tx.expire(this.queueKey(mode.id), this.queueTtlSeconds * 2);
       await tx.exec();
-
-      const paired = await this.tryAutoPair(mode.id);
-      if (paired) return paired;
+      this.logger.log(`lobby:ready user=${userId} mode=${mode.id} ticket=${entry.ticketId} match=${entry.matchId}`);
 
       const players = await this.loadReadyPlayers(mode.id, userId);
       return {
@@ -161,7 +164,7 @@ export class MatchmakingService {
         matchId: entry.matchId,
         players,
       };
-    }, 10000);
+    }, 10000, 2500);
   }
 
   private async challenge(userId: string, ticketId: string): Promise<MatchmakingJoinResult> {
@@ -173,6 +176,7 @@ export class MatchmakingService {
       throw new ConflictException({ code: 'CANNOT_CHALLENGE_SELF', message: 'You cannot join your own ready slot.' });
     }
 
+    this.logger.log(`lobby:challenge challenger=${userId} host=${readyEntry.userId} mode=${readyEntry.gameModeId} ticket=${ticketId}`);
     await this.assertEligible(userId, readyEntry.gameModeId);
 
     const existingTicketId = await this.redis.raw().get(this.userQueueKey(userId));
@@ -199,30 +203,7 @@ export class MatchmakingService {
       }
 
       return this.finalizePair(currentEntry, userId);
-    }, 10000);
-  }
-
-  private async tryAutoPair(gameModeId: string): Promise<MatchmakingMatchedResult | null> {
-    const ticketIds = await this.redis.raw().zRange(this.queueKey(gameModeId), 0, 9);
-    const openEntries: ReadyEntry[] = [];
-
-    for (const ticketId of ticketIds) {
-      const entry = await this.redis.getJson<ReadyEntry>(this.entryKey(ticketId));
-      if (!entry || entry.gameModeId !== gameModeId) continue;
-      if (!(await this.isValidReadyEntry(entry))) {
-        await this.removeReadyEntry(entry, entry.userId).catch(() => undefined);
-        continue;
-      }
-      openEntries.push(entry);
-      if (openEntries.length >= 2) break;
-    }
-
-    if (openEntries.length < 2) return null;
-
-    const [hostEntry, guestEntry] = openEntries;
-    if (hostEntry.userId === guestEntry.userId) return null;
-
-    return this.finalizePair(hostEntry, guestEntry.userId, guestEntry.matchId);
+    }, 10000, 2500);
   }
 
   private async finalizePair(
@@ -268,26 +249,19 @@ export class MatchmakingService {
       cleanup.set(this.assignmentKey(matchedUserId), JSON.stringify(matchedResult), { EX: this.queueTtlSeconds });
     }
     await cleanup.exec();
+    this.logger.log(`lobby:matched host=${hostEntry.userId} guest=${guestUserId} mode=${hostEntry.gameModeId} match=${match.id}`);
 
     return matchedResult;
   }
 
-  private async isValidReadyEntry(entry: ReadyEntry): Promise<boolean> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: entry.userId },
-      select: { status: true },
-    });
+  private isValidReadyEntry(
+    entry: ReadyEntry,
+    match: { status: MatchStatus; participants: Array<{ userId: string }>; entries: Array<{ userId: string; status: MatchEntryStatus }> } | undefined,
+    user: { status: UserStatus } | undefined,
+  ): boolean {
     if (!user || user.status !== UserStatus.ACTIVE) return false;
-
-    const match = await this.prisma.match.findUnique({
-      where: { id: entry.matchId },
-      include: { participants: true, entries: true },
-    });
     if (!match || !this.isOpenReadySlot(match)) return false;
-
-    return match.entries.some(
-      (item) => item.userId === entry.userId && item.status === MatchEntryStatus.LOCKED,
-    );
+    return match.entries.some((item) => item.userId === entry.userId && item.status === MatchEntryStatus.LOCKED);
   }
 
   private isOpenReadySlot(match: {
@@ -300,28 +274,65 @@ export class MatchmakingService {
     );
   }
 
+  // DB4: this used to do, per ticket: 1 Redis read + 1 Prisma match read +
+  // (inside isValidReadyEntry) a *second*, duplicate Prisma match read + 1
+  // Prisma user read - up to ~4 sequential round trips per ready ticket,
+  // i.e. hundreds of round trips for a full (up to 100-entry) ready lobby.
+  // Now: fetch all ticket metadata in parallel, collect the distinct
+  // matchIds/userIds referenced, batch-fetch each with a single `findMany`,
+  // then validate every ticket in memory against the two lookup maps - a
+  // fixed 2 Prisma queries total regardless of how many tickets are ready.
   private async loadReadyPlayers(gameModeId: string, viewerUserId?: string): Promise<ReadyPlayerView[]> {
     const mode = await this.assertModeAvailable(gameModeId);
     const queueKey = this.queueKey(gameModeId);
-    const ticketIds = await this.redis.raw().zRange(queueKey, 0, 49);
-    const players: ReadyPlayerView[] = [];
+    const ticketIds = await this.redis.raw().zRange(queueKey, 0, this.readyLobbyLimit - 1);
+    if (ticketIds.length === 0) return [];
 
-    for (const ticketId of ticketIds) {
-      const entry = await this.redis.getJson<ReadyEntry>(this.entryKey(ticketId));
+    const entries = await Promise.all(
+      ticketIds.map((ticketId) => this.redis.getJson<ReadyEntry>(this.entryKey(ticketId))),
+    );
+
+    const staleTicketIds: string[] = [];
+    const candidates: ReadyEntry[] = [];
+    for (let index = 0; index < ticketIds.length; index += 1) {
+      const entry = entries[index];
       if (!entry || entry.gameModeId !== gameModeId) {
-        await this.redis.raw().zRem(queueKey, ticketId);
+        staleTicketIds.push(ticketIds[index]);
         continue;
       }
+      candidates.push(entry);
+    }
+    if (staleTicketIds.length > 0) {
+      await Promise.all(staleTicketIds.map((ticketId) => this.redis.raw().zRem(queueKey, ticketId)));
+    }
+    if (candidates.length === 0) return [];
 
-      const match = await this.prisma.match.findUnique({
-        where: { id: entry.matchId },
+    const matchIds = [...new Set(candidates.map((entry) => entry.matchId))];
+    const userIds = [...new Set(candidates.map((entry) => entry.userId))];
+
+    const [matches, users] = await Promise.all([
+      this.prisma.match.findMany({
+        where: { id: { in: matchIds } },
         include: { participants: true, entries: true },
-      });
-      if (!match || !(await this.isValidReadyEntry(entry))) {
-        await this.removeReadyEntry(entry, entry.userId).catch(() => undefined);
-        if (match && match.status === MatchStatus.CANCELLED) {
-          await this.gameEntry.cancelAndRefund(match.id, 'READY_SLOT_STALE').catch(() => undefined);
-        }
+      }),
+      this.prisma.user.findMany({
+        where: { id: { in: userIds } },
+        select: { id: true, status: true },
+      }),
+    ]);
+    const matchById = new Map(matches.map((match) => [match.id, match]));
+    const userById = new Map(users.map((user) => [user.id, user]));
+
+    const players: ReadyPlayerView[] = [];
+    const invalidEntries: ReadyEntry[] = [];
+    const staleCancelledMatchIds = new Set<string>();
+
+    for (const entry of candidates) {
+      const match = matchById.get(entry.matchId);
+      const user = userById.get(entry.userId);
+      if (!this.isValidReadyEntry(entry, match, user)) {
+        invalidEntries.push(entry);
+        if (match && match.status === MatchStatus.CANCELLED) staleCancelledMatchIds.add(match.id);
         continue;
       }
 
@@ -333,6 +344,15 @@ export class MatchmakingService {
         stakeAmountMinor: mode.stakeAmountMinor.toString(),
         ...(viewerUserId && entry.userId === viewerUserId ? { isSelf: true } : {}),
       });
+    }
+
+    if (invalidEntries.length > 0) {
+      await Promise.all(invalidEntries.map((entry) => this.removeReadyEntry(entry, entry.userId).catch(() => undefined)));
+    }
+    if (staleCancelledMatchIds.size > 0) {
+      await Promise.all(
+        [...staleCancelledMatchIds].map((matchId) => this.gameEntry.cancelAndRefund(matchId, 'READY_SLOT_STALE').catch(() => undefined)),
+      );
     }
 
     return players;
@@ -380,6 +400,19 @@ export class MatchmakingService {
       throw new BadRequestException({
         code: 'INSUFFICIENT_BALANCE_FOR_MATCH',
         message: 'Available wallet balance is below the game stake.',
+      });
+    }
+    const committed = await this.prisma.matchParticipant.findFirst({
+      where: { userId, match: { status: { in: COMMITTED_MATCH_STATUSES } } },
+      select: { matchId: true, match: { select: { status: true } } },
+    });
+    if (committed) {
+      this.logger.warn(
+        `operation=QUICK_MATCH reason=LOBBY_ACTIVE_MATCH blockedUserId=${userId} blockingMatchId=${committed.matchId} blockingStatus=${committed.match.status}`,
+      );
+      throw new ConflictException({
+        code: 'LOBBY_ACTIVE_MATCH',
+        message: 'You already have an open match entry.',
       });
     }
     return mode;
