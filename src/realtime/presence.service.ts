@@ -3,6 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { AppEnv } from '../config/env';
 import { RedisService } from '../redis/redis.service';
 
+/**
+ * Presence is a sorted set of socketId -> last heartbeat (ms). Only sockets
+ * seen within the TTL count, so ids orphaned by a server restart (which never
+ * get a disconnect event) age out instead of keeping a user "online" forever.
+ */
 @Injectable()
 export class PresenceService {
   private readonly ttlSeconds: number;
@@ -15,42 +20,65 @@ export class PresenceService {
   }
 
   async connected(userId: string, socketId: string): Promise<void> {
-    const socketsKey = this.redis.key('presence', 'user', userId, 'sockets');
-    const metaKey = this.redis.key('presence', 'user', userId, 'meta');
-    const tx = this.redis.raw().multi();
-    tx.sAdd(socketsKey, socketId);
-    tx.expire(socketsKey, this.ttlSeconds);
-    tx.set(
-      metaKey,
-      JSON.stringify({ status: 'ONLINE', lastSeenAt: new Date().toISOString() }),
-      { EX: this.ttlSeconds },
-    );
-    await tx.exec();
+    const now = Date.now();
+    await this.redis
+      .raw()
+      .multi()
+      .zAdd(this.socketsKey(userId), [{ score: now, value: socketId }])
+      .zRemRangeByScore(this.socketsKey(userId), '-inf', this.staleBefore(now))
+      .expire(this.socketsKey(userId), this.ttlSeconds)
+      .set(
+        this.metaKey(userId),
+        JSON.stringify({ status: 'ONLINE', lastSeenAt: new Date(now).toISOString() }),
+        { EX: this.ttlSeconds },
+      )
+      .exec();
   }
 
   async heartbeat(userId: string, socketId: string): Promise<void> {
     await this.connected(userId, socketId);
   }
 
+  /** Returns true when this was the user's last live socket. */
   async disconnected(userId: string, socketId: string): Promise<boolean> {
-    const socketsKey = this.redis.key('presence', 'user', userId, 'sockets');
-    const metaKey = this.redis.key('presence', 'user', userId, 'meta');
-    await this.redis.raw().sRem(socketsKey, socketId);
-    const count = await this.redis.raw().sCard(socketsKey);
-    if (count > 0) {
-      await this.redis.raw().expire(socketsKey, this.ttlSeconds);
-      return false;
-    }
+    const now = Date.now();
+    const [, , remaining] = await this.redis
+      .raw()
+      .multi()
+      .zRem(this.socketsKey(userId), socketId)
+      .zRemRangeByScore(this.socketsKey(userId), '-inf', this.staleBefore(now))
+      .zCard(this.socketsKey(userId))
+      .exec();
+    if (Number(remaining) > 0) return false;
 
-    await this.redis.raw().set(
-      metaKey,
-      JSON.stringify({ status: 'OFFLINE', lastSeenAt: new Date().toISOString() }),
-      { EX: Math.max(this.ttlSeconds, 300) },
-    );
+    await this.redis
+      .raw()
+      .set(
+        this.metaKey(userId),
+        JSON.stringify({ status: 'OFFLINE', lastSeenAt: new Date(now).toISOString() }),
+        {
+          EX: Math.max(this.ttlSeconds, 300),
+        },
+      );
     return true;
   }
 
   async isOnline(userId: string): Promise<boolean> {
-    return (await this.redis.raw().sCard(this.redis.key('presence', 'user', userId, 'sockets'))) > 0;
+    const live = await this.redis
+      .raw()
+      .zCount(this.socketsKey(userId), this.staleBefore(Date.now()) + 1, '+inf');
+    return live > 0;
+  }
+
+  private staleBefore(now: number): number {
+    return now - this.ttlSeconds * 1000;
+  }
+
+  private socketsKey(userId: string): string {
+    return this.redis.key('presence', 'user', userId, 'socket-seen');
+  }
+
+  private metaKey(userId: string): string {
+    return this.redis.key('presence', 'user', userId, 'meta');
   }
 }
