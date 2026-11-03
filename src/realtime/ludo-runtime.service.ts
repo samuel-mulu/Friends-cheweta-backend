@@ -8,23 +8,17 @@ import {
 import { GameEntryService } from '../game-entry/game-entry.service';
 import { CryptoDiceProvider } from '../games/ludo/dice';
 import { LudoMatchPhase } from '../games/ludo/domain';
-import {
-  LudoMatchRuntime,
-  LudoRuntimeCommand,
-  LudoRuntimeEventType,
-  LudoMatchRuntimeState,
-} from '../games/ludo/runtime';
+import { LudoMatchRuntime, LudoMatchRuntimeState, LudoRuntimeCommand } from '../games/ludo/runtime';
 import { MatchStatus } from '../generated/prisma/enums';
 import { MatchHistoryService } from '../match-history/match-history.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { SettlementService } from '../settlement/settlement.service';
 import { LudoRuntimeRepository } from './ludo-runtime.repository';
-import { RuntimeExecution, LudoMatchParticipantView } from './realtime.types';
+import { LudoMatchParticipantView, RuntimeExecution } from './realtime.types';
 
-function commandFingerprint(command: LudoRuntimeCommand & { matchId: string }): string {
-  return JSON.stringify(command);
-}
+/** Player commands wait this long for a concurrent command (e.g. a turn timeout) to finish. */
+const COMMAND_LOCK_WAIT_MS = 2000;
 
 @Injectable()
 export class LudoRuntimeService {
@@ -46,18 +40,21 @@ export class LudoRuntimeService {
     return state;
   }
 
-  async getParticipantViews(matchId: string, state: LudoMatchRuntimeState): Promise<LudoMatchParticipantView[]> {
+  async getParticipantViews(
+    matchId: string,
+    state: LudoMatchRuntimeState,
+  ): Promise<LudoMatchParticipantView[]> {
     const rows = await this.prisma.matchParticipant.findMany({
       where: { matchId },
       orderBy: { seat: 'asc' },
       include: { user: { select: { id: true, fullName: true } } },
     });
-
     return rows.map((participant) => ({
       userId: participant.userId,
       fullName: participant.user.fullName,
       seat: participant.seat,
-      color: state.game.players.find((player) => player.userId === participant.userId)?.color ?? null,
+      color:
+        state.game.players.find((player) => player.userId === participant.userId)?.color ?? null,
     }));
   }
 
@@ -65,123 +62,161 @@ export class LudoRuntimeService {
     return this.repository.getSnapshot(matchId);
   }
 
+  /** Drop live runtime state for a match that was cancelled before it could finish. */
+  async discardRuntime(matchId: string): Promise<void> {
+    await this.repository.deleteSnapshot(matchId);
+  }
+
+  /**
+   * The Redis snapshot is committed under the match lock and is the result.
+   * PostgreSQL follow-up (history, status, settlement) runs afterwards; if it
+   * fails the match is queued for retry rather than failing a move that has
+   * already happened.
+   */
   async execute(command: LudoRuntimeCommand & { matchId: string }): Promise<RuntimeExecution> {
-    const matchId = command.matchId;
+    const { matchId, ...runtimeCommand } = command;
     await this.assertParticipant(matchId, command.playerId);
 
-    const lockedExecution = await this.redis.withLock(this.repository.lockKey(matchId), async () => {
-      const fingerprint = commandFingerprint(command);
-      const previous = await this.repository.getCommand(matchId, command.commandId);
-      if (previous) {
-        if (previous.fingerprint !== fingerprint) throw new Error('COMMAND_ID_REUSE');
-        const currentState = await this.ensureSnapshot(matchId);
+    const execution = await this.redis.withLock(
+      this.repository.lockKey(matchId),
+      async () => {
+        const fingerprint = JSON.stringify(command);
+        const previous = await this.repository.getCommand(matchId, command.commandId);
+        if (previous) {
+          if (previous.fingerprint !== fingerprint) throw new Error('COMMAND_ID_REUSE');
+          const currentState = await this.ensureSnapshot(matchId);
+          return {
+            commandId: command.commandId,
+            version: currentState.game.version,
+            duplicate: true,
+            state: currentState,
+            events: [],
+          };
+        }
+
+        const state = await this.ensureSnapshot(matchId);
+        const result = LudoMatchRuntime.restore(state, new CryptoDiceProvider()).execute(
+          runtimeCommand,
+        );
+        await this.repository.saveSnapshotAndCommand({
+          matchId,
+          commandId: command.commandId,
+          fingerprint,
+          state: result.state,
+          resultingVersion: result.state.game.version,
+          events: result.events,
+        });
         return {
           commandId: command.commandId,
-          version: currentState.game.version,
-          duplicate: true,
-          state: currentState,
-          events: [],
-          durableEvents: previous.events ?? [],
+          version: result.state.game.version,
+          duplicate: false,
+          state: result.state,
+          events: result.events,
         };
+      },
+      undefined,
+      COMMAND_LOCK_WAIT_MS,
+    );
+
+    if (!execution.duplicate) {
+      try {
+        await this.history.persistExecution({
+          matchId,
+          commandId: command.commandId,
+          state: execution.state,
+          events: execution.events,
+        });
+        await this.syncMatchStatus(execution.state);
+      } catch (error) {
+        this.logger.error(
+          `ludo_post_commit_failed match=${matchId} command=${command.commandId} reason=${(error as Error).message}`,
+        );
+        await this.redis
+          .raw()
+          .sAdd(this.repository.postCommitRetryKey(), matchId)
+          .catch(() => undefined);
       }
+    }
+    return execution;
+  }
 
-      const state = await this.ensureSnapshot(matchId);
-      const runtime = LudoMatchRuntime.restore(state, new CryptoDiceProvider());
-      const { matchId: _matchId, ...runtimeCommand } = command;
-      const result = runtime.execute(runtimeCommand as LudoRuntimeCommand);
-
-      await this.repository.saveSnapshotAndCommand({
-        matchId,
-        commandId: command.commandId,
-        fingerprint,
-        state: result.state,
-        resultingVersion: result.state.game.version,
-        events: result.events,
-      });
-
-      return {
-        commandId: command.commandId,
-        version: result.state.game.version,
-        duplicate: false,
-        state: result.state,
-        events: result.events,
-        durableEvents: result.events,
-      };
-    });
-
-    // Keep the distributed gameplay lock narrow: runtime mutation and Redis
-    // persistence happen under the lock. PostgreSQL history/settlement follows.
-    await this.history.persistExecution({
-      matchId,
-      commandId: command.commandId,
-      state: lockedExecution.state,
-      events: lockedExecution.durableEvents,
-    });
-    await this.afterStatePersisted(lockedExecution.state, lockedExecution.events.map((event) => event.type));
-    const { durableEvents: _durableEvents, ...execution } = lockedExecution;
-    return execution satisfies RuntimeExecution;
+  /** Maintenance: re-apply checkpoint + status/settlement for matches whose post-commit step failed. */
+  async retryPostCommit(): Promise<void> {
+    const matchIds = await this.redis.raw().sMembers(this.repository.postCommitRetryKey());
+    for (const matchId of matchIds.slice(0, 25)) {
+      try {
+        const state = await this.repository.getSnapshot(matchId);
+        if (state) {
+          await this.history.saveCheckpoint(matchId, state);
+          await this.syncMatchStatus(state);
+        }
+        await this.redis.raw().sRem(this.repository.postCommitRetryKey(), matchId);
+      } catch (error) {
+        this.logger.warn(
+          `ludo_post_commit_retry_failed match=${matchId} reason=${(error as Error).message}`,
+        );
+      }
+    }
   }
 
   private async ensureSnapshot(matchId: string): Promise<LudoMatchRuntimeState> {
     const existing = await this.repository.getSnapshot(matchId);
     if (existing) {
-      await this.gameEntry.assertSecured(matchId);
+      await this.gameEntry.assertPlayable(matchId);
       return existing;
     }
 
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
-      include: {
-        game: true,
-        participants: { orderBy: { seat: 'asc' } },
-      },
+      include: { game: true, participants: { orderBy: { seat: 'asc' } } },
     });
-    if (!match) throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
-    if (match.game.code !== 'LUDO') {
-      throw new NotFoundException({ code: 'NOT_LUDO_MATCH', message: 'This runtime only supports Ludo matches.' });
+    if (!match)
+      throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
+    if (match.game.code !== 'LUDO')
+      throw new NotFoundException({
+        code: 'NOT_LUDO_MATCH',
+        message: 'This runtime only supports Ludo matches.',
+      });
+    if (([MatchStatus.CANCELLED, MatchStatus.ABORTED] as MatchStatus[]).includes(match.status)) {
+      throw new ServiceUnavailableException({
+        code: 'MATCH_NOT_ACTIVE',
+        message: 'This match is no longer active.',
+      });
     }
 
     if (
-      ([MatchStatus.PLAYING, MatchStatus.FINISHING, MatchStatus.FINISHED] as MatchStatus[]).includes(
-        match.status,
-      )
+      (
+        [MatchStatus.PLAYING, MatchStatus.FINISHING, MatchStatus.FINISHED] as MatchStatus[]
+      ).includes(match.status)
     ) {
       const durable = await this.history.getCheckpoint(matchId);
-      if (durable) {
-        await this.repository.saveSnapshot(matchId, durable);
-        return durable;
+      if (!durable) {
+        throw new ServiceUnavailableException({
+          code: 'LUDO_RUNTIME_SNAPSHOT_MISSING',
+          message: 'The active Ludo snapshot and durable checkpoint are unavailable.',
+        });
       }
-      throw new ServiceUnavailableException({
-        code: 'LUDO_RUNTIME_SNAPSHOT_MISSING',
-        message: 'The active Ludo snapshot and durable checkpoint are unavailable.',
-      });
+      // NX: never overwrite a newer snapshot written concurrently by a command.
+      return this.repository.saveSnapshotIfAbsent(matchId, durable);
     }
-    if (([MatchStatus.CANCELLED, MatchStatus.ABORTED] as MatchStatus[]).includes(match.status)) {
-      throw new ServiceUnavailableException({ code: 'MATCH_NOT_ACTIVE', message: 'This match is no longer active.' });
-    }
+
     if (match.rulesVersion !== 'LUDO_CLASSIC_V1') {
       throw new ServiceUnavailableException({
         code: 'UNSUPPORTED_LUDO_RULES_VERSION',
         message: `Unsupported rules version: ${match.rulesVersion}`,
       });
     }
+    // Paid gameplay may not start until every participant's stake is secured.
+    await this.gameEntry.assertPlayable(matchId);
 
-    // B15 hard boundary: paid/free matched sessions may not instantiate the
-    // authoritative game runtime until every participant entry is secured.
-    await this.gameEntry.assertSecured(matchId);
-
-    const runtime = new LudoMatchRuntime(
+    const initial = new LudoMatchRuntime(
       match.id,
       match.participants.map((participant) => participant.userId),
       new CryptoDiceProvider(),
-    );
-    const state = runtime.getState();
-    await this.repository.saveSnapshot(matchId, state);
-    await this.history.saveInitialCheckpoint(matchId, state);
-
-    if (match.status !== MatchStatus.READY) {
-      await this.prisma.match.update({ where: { id: match.id }, data: { status: MatchStatus.READY } });
-    }
+    ).getState();
+    // Two players joining at once both reach here; exactly one snapshot wins.
+    const state = await this.repository.saveSnapshotIfAbsent(matchId, initial);
+    await this.history.saveCheckpoint(matchId, state);
     return state;
   }
 
@@ -190,45 +225,46 @@ export class LudoRuntimeService {
       where: { matchId_userId: { matchId, userId } },
       select: { id: true },
     });
-    if (!participant) {
-      const exists = await this.prisma.match.findUnique({ where: { id: matchId }, select: { id: true } });
-      if (!exists) throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
-      throw new ForbiddenException({ code: 'MATCH_ACCESS_DENIED', message: 'You are not part of this match.' });
-    }
+    if (participant) return;
+    const exists = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      select: { id: true },
+    });
+    if (!exists)
+      throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
+    throw new ForbiddenException({
+      code: 'MATCH_ACCESS_DENIED',
+      message: 'You are not part of this match.',
+    });
   }
 
-  private async afterStatePersisted(
-    state: LudoMatchRuntimeState,
-    eventTypes: LudoRuntimeEventType[],
-  ): Promise<void> {
-    if (eventTypes.includes(LudoRuntimeEventType.MATCH_STARTED)) {
-      await this.prisma.match.updateMany({
-        where: { id: state.game.matchId, status: MatchStatus.READY, entrySecuredAt: { not: null } },
-        data: { status: MatchStatus.PLAYING, startedAt: new Date() },
-      });
-    }
+  /**
+   * Derive the durable match status from the authoritative game state.
+   * Idempotent, so it is safe for both the live path and retries.
+   */
+  private async syncMatchStatus(state: LudoMatchRuntimeState): Promise<void> {
+    const matchId = state.game.matchId;
+    if (state.game.phase === LudoMatchPhase.PRE_GAME) return;
 
-    if (state.game.phase === LudoMatchPhase.FINISHED || eventTypes.includes(LudoRuntimeEventType.MATCH_FINISHED)) {
-      await this.prisma.match.updateMany({
-        where: {
-          id: state.game.matchId,
-          status: { notIn: [MatchStatus.FINISHED, MatchStatus.CANCELLED, MatchStatus.ABORTED] },
-        },
-        data: {
-          status: MatchStatus.FINISHING,
-          winnerOrder: state.game.winnerOrder,
-          resultVersion: state.game.version,
-        },
-      });
+    await this.prisma.match.updateMany({
+      where: { id: matchId, status: MatchStatus.READY, entrySecuredAt: { not: null } },
+      data: { status: MatchStatus.PLAYING, startedAt: new Date() },
+    });
+    if (state.game.phase !== LudoMatchPhase.FINISHED) return;
 
-      // The game result is already authoritative in the persisted runtime.
-      // Settlement is exactly-once and retryable; a temporary DB failure must
-      // not replay or mutate the game command itself.
-      try {
-        await this.settlement.settleLudoMatch(state);
-      } catch (error) {
-        this.logger.error(`Settlement pending for ${state.game.matchId}: ${(error as Error).message}`);
-      }
+    await this.prisma.match.updateMany({
+      where: { id: matchId, status: { in: [MatchStatus.READY, MatchStatus.PLAYING] } },
+      data: {
+        status: MatchStatus.FINISHING,
+        winnerOrder: state.game.winnerOrder,
+        resultVersion: state.game.version,
+      },
+    });
+    // Settlement is exactly-once; if it fails here the FINISHING reconciler retries it.
+    try {
+      await this.settlement.settleLudoMatch(state);
+    } catch (error) {
+      this.logger.error(`Settlement pending for ${matchId}: ${(error as Error).message}`);
     }
   }
 }

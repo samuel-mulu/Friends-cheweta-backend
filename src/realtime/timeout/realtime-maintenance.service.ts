@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
 import { ChallengeService } from '../../challenge/challenge.service';
 import { SettlementService } from '../../settlement/settlement.service';
+import { LudoRuntimeService } from '../ludo-runtime.service';
 import { RealtimePublisherService } from '../realtime-publisher.service';
 import { TurnTimeoutService } from './turn-timeout.service';
 
@@ -26,6 +27,7 @@ export class RealtimeMaintenanceService implements OnModuleInit, OnApplicationSh
     private readonly settlement: SettlementService,
     private readonly challenges: ChallengeService,
     private readonly publisher: RealtimePublisherService,
+    private readonly runtime: LudoRuntimeService,
   ) {}
 
   onModuleInit(): void {
@@ -54,6 +56,7 @@ export class RealtimeMaintenanceService implements OnModuleInit, OnApplicationSh
       await this.timeouts.processDueDisconnects();
       await this.timeouts.processReadyNoShows();
       await this.timeouts.processPrematchOrphans();
+      await this.runtime.retryPostCommit();
     } catch (error) {
       this.logger.warn(`Gameplay maintenance tick failed: ${(error as Error).message}`);
     } finally {

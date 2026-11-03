@@ -16,14 +16,7 @@ export class MatchHistoryService {
   }): Promise<void> {
     const stateJson = this.toJson(input.state);
     await this.prisma.$transaction(async (tx) => {
-      const checkpoint = await tx.matchCheckpoint.findUnique({ where: { matchId: input.matchId } });
-      if (!checkpoint || checkpoint.version <= input.state.game.version) {
-        await tx.matchCheckpoint.upsert({
-          where: { matchId: input.matchId },
-          create: { matchId: input.matchId, version: input.state.game.version, state: stateJson },
-          update: { version: input.state.game.version, state: stateJson },
-        });
-      }
+      await this.writeCheckpoint(tx, input.matchId, input.state.game.version, stateJson);
 
       if (input.events.length === 0) return;
       const existingForCommand = await tx.matchEvent.count({
@@ -37,6 +30,7 @@ export class MatchHistoryService {
       // runtime command emits far fewer than 1,000 domain events.
       const sequenceBase = input.state.game.version * 1_000;
       await tx.matchEvent.createMany({
+        skipDuplicates: true,
         data: input.events.map((event, index) => ({
           matchId: input.matchId,
           sequence: sequenceBase + index,
@@ -49,12 +43,25 @@ export class MatchHistoryService {
     });
   }
 
-  async saveInitialCheckpoint(matchId: string, state: LudoMatchRuntimeState): Promise<void> {
-    await this.prisma.matchCheckpoint.upsert({
-      where: { matchId },
-      create: { matchId, version: state.game.version, state: this.toJson(state) },
-      update: { version: state.game.version, state: this.toJson(state) },
+  /** Persist the latest snapshot only (used by post-commit retries). */
+  async saveCheckpoint(matchId: string, state: LudoMatchRuntimeState): Promise<void> {
+    await this.writeCheckpoint(this.prisma, matchId, state.game.version, this.toJson(state));
+  }
+
+  /** Monotonic: never replaces a newer checkpoint, even under concurrent writers. */
+  private async writeCheckpoint(
+    db: Prisma.TransactionClient | PrismaService,
+    matchId: string,
+    version: number,
+    state: Prisma.InputJsonValue,
+  ): Promise<void> {
+    const updated = await db.matchCheckpoint.updateMany({
+      where: { matchId, version: { lt: version } },
+      data: { version, state },
     });
+    if (updated.count === 0) {
+      await db.matchCheckpoint.createMany({ data: [{ matchId, version, state }], skipDuplicates: true });
+    }
   }
 
   async getCheckpoint(matchId: string): Promise<LudoMatchRuntimeState | null> {

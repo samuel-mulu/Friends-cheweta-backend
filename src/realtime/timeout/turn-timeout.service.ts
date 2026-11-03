@@ -126,22 +126,7 @@ export class TurnTimeoutService {
         }
 
         if (participant.match.status === MatchStatus.READY) {
-          await this.gameEntry.cancelAndRefund(participant.matchId, 'PLAYER_DISCONNECTED_BEFORE_START');
-          const players = await this.prisma.matchParticipant.findMany({
-            where: { matchId: participant.matchId },
-            select: { userId: true },
-          });
-          const cleanup = this.redis.raw().multi();
-          for (const player of players) {
-            cleanup.del(this.redis.key('matchmaking', 'assignment', player.userId));
-            this.publisher.publishUser(
-              player.userId,
-              'match:cancelled',
-              { matchId: participant.matchId, reason: 'DISCONNECT_GRACE_EXPIRED' },
-              participant.matchId,
-            );
-          }
-          await cleanup.exec();
+          await this.cancelBeforeStart(participant.matchId, 'PLAYER_DISCONNECTED_BEFORE_START', 'DISCONNECT_GRACE_EXPIRED');
         } else {
           const state = await this.runtime.getStoredSnapshot(participant.matchId);
           if (state?.game.phase === LudoMatchPhase.PLAYING && !state.resignedPlayerIds.includes(userId)) {
@@ -177,22 +162,7 @@ export class TurnTimeoutService {
         // realtime match room at least once. A partial join times out to a
         // refund instead of letting an absent player lose by automatic play.
         if (await this.allParticipantsJoined(match.id)) continue;
-        await this.gameEntry.cancelAndRefund(match.id, 'MATCH_READY_NO_SHOW');
-        const players = await this.prisma.matchParticipant.findMany({
-          where: { matchId: match.id },
-          select: { userId: true },
-        });
-        const cleanup = this.redis.raw().multi();
-        for (const player of players) {
-          cleanup.del(this.redis.key('matchmaking', 'assignment', player.userId));
-          this.publisher.publishUser(
-            player.userId,
-            'match:cancelled',
-            { matchId: match.id, reason: 'READY_NO_SHOW_TIMEOUT' },
-            match.id,
-          );
-        }
-        await cleanup.exec();
+        await this.cancelBeforeStart(match.id, 'MATCH_READY_NO_SHOW', 'READY_NO_SHOW_TIMEOUT');
       } catch (error) {
         this.logger.warn(`Ready no-show cleanup failed for ${match.id}: ${(error as Error).message}`);
       }
@@ -220,34 +190,44 @@ export class TurnTimeoutService {
     let cancelled = 0;
     for (const candidate of candidates) {
       try {
-        const result = await this.gameEntry.cancelAndRefund(candidate.id, 'PREMATCH_ORPHAN_TIMEOUT', {
+        const done = await this.cancelBeforeStart(candidate.id, 'PREMATCH_ORPHAN_TIMEOUT', 'PREMATCH_ORPHAN_TIMEOUT', {
           expectedStatuses: PREMATCH_ORPHAN_STATUSES,
         });
-        if ('skipped' in result && result.skipped) continue;
-        if (!result.refunded) continue;
+        if (!done) continue;
         cancelled += 1;
         this.logger.log(`prematch_orphan_cancelled match=${candidate.id}`);
-        const players = await this.prisma.matchParticipant.findMany({
-          where: { matchId: candidate.id },
-          select: { userId: true },
-        });
-        const cleanup = this.redis.raw().multi();
-        for (const player of players) {
-          cleanup.del(this.redis.key('matchmaking', 'assignment', player.userId));
-          cleanup.del(this.redis.key('matchmaking', 'user', player.userId));
-          this.publisher.publishUser(
-            player.userId,
-            'match:cancelled',
-            { matchId: candidate.id, reason: 'PREMATCH_ORPHAN_TIMEOUT' },
-            candidate.id,
-          );
-        }
-        await cleanup.exec();
       } catch (error) {
         this.logger.warn(`Prematch orphan cleanup failed for ${candidate.id}: ${(error as Error).message}`);
       }
     }
     return cancelled;
+  }
+
+  /**
+   * Refund a match that never started, discard its live runtime so no further
+   * commands or timers act on it, and tell the players.
+   */
+  private async cancelBeforeStart(
+    matchId: string,
+    reason: string,
+    clientReason: string,
+    options?: { expectedStatuses?: MatchStatus[] },
+  ): Promise<boolean> {
+    const result = await this.gameEntry.cancelAndRefund(matchId, reason, options);
+    if (('skipped' in result && result.skipped) || !result.refunded) return false;
+
+    await this.runtime.discardRuntime(matchId);
+    const players = await this.prisma.matchParticipant.findMany({ where: { matchId }, select: { userId: true } });
+    const cleanup = this.redis.raw().multi().zRem(this.turnQueueKey(), matchId).del(this.timingKey(matchId));
+    for (const player of players) {
+      cleanup.del(this.redis.key('matchmaking', 'assignment', player.userId));
+      cleanup.del(this.redis.key('matchmaking', 'user', player.userId));
+    }
+    await cleanup.exec();
+    for (const player of players) {
+      this.publisher.publishUser(player.userId, 'match:cancelled', { matchId, reason: clientReason }, matchId);
+    }
+    return true;
   }
 
   private async processTurnTimeout(matchId: string, now: number): Promise<void> {

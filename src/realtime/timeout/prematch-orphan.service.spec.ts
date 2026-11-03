@@ -113,6 +113,7 @@ describe('prematch orphan lifecycle', () => {
         multi: () => {
           const chain: any = {
             del: () => chain,
+            zRem: () => chain,
             exec: async () => undefined,
           };
           return chain;
@@ -121,6 +122,7 @@ describe('prematch orphan lifecycle', () => {
       key: (...parts: string[]) => parts.join(':'),
     };
     const publisher = { publishUser: jest.fn() };
+    const runtime = { discardRuntime: jest.fn(async () => undefined) };
     const config = {
       get: jest.fn((key: string) => {
         if (key === 'PREMATCH_ORPHAN_TIMEOUT_SECONDS') return 600;
@@ -132,7 +134,7 @@ describe('prematch orphan lifecycle', () => {
     const service = new TurnTimeoutService(
       redis as any,
       prisma as any,
-      {} as any,
+      runtime as any,
       {} as any,
       publisher as any,
       { cancelAndRefund } as any,
@@ -141,6 +143,8 @@ describe('prematch orphan lifecycle', () => {
 
     const cancelled = await service.processPrematchOrphans();
     expect(cancelled).toBe(1);
+    expect(runtime.discardRuntime).toHaveBeenCalledWith('old-orphan');
+    expect(publisher.publishUser).toHaveBeenCalledWith('u1', 'match:cancelled', expect.objectContaining({ matchId: 'old-orphan' }), 'old-orphan');
     expect(cancelAndRefund).toHaveBeenCalledWith('old-orphan', 'PREMATCH_ORPHAN_TIMEOUT', {
       expectedStatuses: PREMATCH_ORPHAN_STATUSES,
     });

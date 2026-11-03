@@ -43,8 +43,27 @@ export class LudoRuntimeRepository {
     return this.redis.getJson<StoredCommandRecord>(this.commandKey(matchId, commandId));
   }
 
-  async saveSnapshot(matchId: string, state: LudoMatchRuntimeState): Promise<void> {
-    await this.redis.setJson(this.snapshotKey(matchId), state, this.runtimeTtlSeconds);
+  /** Store only if no snapshot exists; returns the snapshot that is now authoritative. */
+  async saveSnapshotIfAbsent(
+    matchId: string,
+    state: LudoMatchRuntimeState,
+  ): Promise<LudoMatchRuntimeState> {
+    const created = await this.redis
+      .raw()
+      .set(this.snapshotKey(matchId), JSON.stringify(state), {
+        NX: true,
+        EX: this.runtimeTtlSeconds,
+      });
+    if (created === 'OK') return state;
+    return (await this.getSnapshot(matchId)) ?? state;
+  }
+
+  async deleteSnapshot(matchId: string): Promise<void> {
+    await this.redis.raw().del(this.snapshotKey(matchId));
+  }
+
+  postCommitRetryKey(): string {
+    return this.redis.key('runtime', 'ludo', 'post-commit-retry');
   }
 
   async saveSnapshotAndCommand(input: {
@@ -56,7 +75,9 @@ export class LudoRuntimeRepository {
     events: LudoRuntimeEvent[];
   }): Promise<void> {
     const tx = this.redis.raw().multi();
-    tx.set(this.snapshotKey(input.matchId), JSON.stringify(input.state), { EX: this.runtimeTtlSeconds });
+    tx.set(this.snapshotKey(input.matchId), JSON.stringify(input.state), {
+      EX: this.runtimeTtlSeconds,
+    });
     tx.set(
       this.commandKey(input.matchId, input.commandId),
       JSON.stringify({

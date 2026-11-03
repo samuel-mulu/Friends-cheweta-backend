@@ -183,12 +183,16 @@ export class GameEntryService {
     );
   }
 
-  async assertSecured(matchId: string): Promise<void> {
+  /** Gameplay guard: stakes secured and the match not cancelled/aborted. */
+  async assertPlayable(matchId: string): Promise<void> {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
       select: { entrySecuredAt: true, status: true },
     });
     if (!match) throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
+    if (([MatchStatus.CANCELLED, MatchStatus.ABORTED] as MatchStatus[]).includes(match.status)) {
+      throw new ConflictException({ code: 'MATCH_NOT_ACTIVE', message: 'This match is no longer active.' });
+    }
     if (!match.entrySecuredAt) {
       throw new ConflictException({
         code: 'MATCH_ENTRY_NOT_SECURED',
