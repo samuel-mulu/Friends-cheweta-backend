@@ -1,26 +1,41 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { COMMITTED_MATCH_STATUSES, isRecoverableMatchStatus } from '../common/match-status';
-import { UserStatus } from '../generated/prisma/enums';
+import { COMMITTED_MATCH_STATUSES } from '../common/match-status';
 import { LobbyService } from '../lobby/lobby.service';
-import { LobbyPlayerView } from '../lobby/lobby.types';
+import { LOBBY_TTL_SECONDS } from '../lobby/lobby.types';
 import { MatchCreationService } from '../match-creation/match-creation.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
-import { ChallengeRecord, ChallengeStatus, ChallengeView } from './challenge.types';
+import {
+  ChallengeAcceptFailedError,
+  ChallengeEventName,
+  ChallengeRecord,
+  ChallengeTransition,
+  ChallengeView,
+} from './challenge.types';
 
-export type AcceptFailureRecovery = {
-  gameModeId: string;
-  challenge: ChallengeView;
-  available: LobbyPlayerView[];
-  leftUserIds: string[];
-};
+type MatchSummary = { id: string; participants?: Array<{ userId: string; seat: number }> } & Record<
+  string,
+  unknown
+>;
+
+/** How long an opponent has to answer. */
+const CHALLENGE_TTL_MS = 15_000;
+/** Redis retention for challenge records/reservations; status transitions, not TTLs, end a challenge. */
+const RECORD_TTL_SECONDS = 300;
+/** An ACCEPTING challenge older than this is resolved by the sweep (match creation is bounded well below it). */
+const STALE_ACCEPTING_MS = 60_000;
+const COMMAND_TTL_SECONDS = 300;
 
 @Injectable()
 export class ChallengeService {
   private readonly logger = new Logger(ChallengeService.name);
-  private readonly ttlSeconds = 15;
-  private readonly commandTtlSeconds = 300;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -29,312 +44,459 @@ export class ChallengeService {
     private readonly matchCreation: MatchCreationService,
   ) {}
 
-  async create(challengerId: string, opponentId: string, commandId: string): Promise<{ challenge: ChallengeView; duplicate: boolean }> {
+  async create(
+    challengerId: string,
+    opponentId: string,
+    commandId: string,
+  ): Promise<{ challenge: ChallengeView; duplicate: boolean }> {
     const duplicate = await this.commandResult(commandId, challengerId);
     if (duplicate) return { challenge: await this.view(duplicate.challengeId), duplicate: true };
-    if (challengerId === opponentId) throw new ConflictException({ code: 'CHALLENGE_SELF_NOT_ALLOWED', message: 'You cannot challenge yourself.' });
-    await this.assertActive(challengerId);
-    await this.assertActive(opponentId);
-    const challenger = await this.lobby.requireContext(challengerId);
-    const opponent = await this.lobby.requireContext(opponentId);
-    if (challenger.gameModeId !== opponent.gameModeId) throw new ConflictException({ code: 'LOBBY_DIFFERENT_MODE', message: 'Player is in a different lobby.' });
-    await this.assertModeEnabled(challenger.gameModeId);
-    await this.assertNoCommittedMatch([challengerId, opponentId]);
+    if (challengerId === opponentId)
+      throw new ConflictException({
+        code: 'CHALLENGE_SELF_NOT_ALLOWED',
+        message: 'You cannot challenge yourself.',
+      });
 
-    const id = randomUUID();
-    const createdAtMs = Date.now();
-    const expiresAtMs = createdAtMs + this.ttlSeconds * 1000;
+    const [challenger, opponent] = await Promise.all([
+      this.lobby.requireContext(challengerId),
+      this.lobby.requireContext(opponentId),
+    ]);
+    if (challenger.gameModeId !== opponent.gameModeId)
+      throw new ConflictException({
+        code: 'LOBBY_DIFFERENT_MODE',
+        message: 'Player is in a different lobby.',
+      });
+    await this.lobby.assertCanPlay([challengerId, opponentId], challenger.gameModeId);
+
+    const now = Date.now();
     const record: ChallengeRecord = {
-      id,
+      id: randomUUID(),
       gameModeId: challenger.gameModeId,
       challengerId,
       opponentId,
       status: 'PENDING',
-      createdAt: new Date(createdAtMs).toISOString(),
-      expiresAt: new Date(expiresAtMs).toISOString(),
+      createdAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + CHALLENGE_TTL_MS).toISOString(),
+      expiresAtMs: now + CHALLENGE_TTL_MS,
     };
 
-    const result = await this.redis.raw().eval(this.reserveScript(), {
+    const result = (await this.redis.raw().eval(RESERVE_SCRIPT, {
       keys: [
-        this.userKey(challengerId),
-        this.userKey(opponentId),
-        this.challengeUserKey(challengerId),
-        this.challengeUserKey(opponentId),
-        this.challengeKey(id),
-        this.readyKey(challenger.gameModeId),
+        this.contextKey(challengerId),
+        this.contextKey(opponentId),
+        this.reservationKey(challengerId),
+        this.reservationKey(opponentId),
+        this.challengeKey(record.id),
+        this.readyKey(record.gameModeId),
         this.expiresKey(),
       ],
-      arguments: [JSON.stringify(record), id, String(expiresAtMs)],
-    }) as string;
-    if (result !== 'OK') throw new ConflictException({ code: result, message: 'Challenge could not be created.' });
-    await this.storeCommand(commandId, challengerId, { challengeId: id });
-    return { challenge: await this.view(id), duplicate: false };
+      arguments: [
+        JSON.stringify(record),
+        record.id,
+        String(record.expiresAtMs),
+        String(RECORD_TTL_SECONDS),
+        String(LOBBY_TTL_SECONDS),
+      ],
+    })) as string;
+    if (result !== 'OK')
+      throw new ConflictException({ code: result, message: 'Challenge could not be created.' });
+    await this.storeCommand(commandId, challengerId, record.id);
+    return { challenge: await this.toView(record), duplicate: false };
   }
 
-  async accept(userId: string, challengeId: string, commandId: string): Promise<{ challenge: ChallengeView; duplicate: boolean }> {
+  /**
+   * Exactly one accept can claim PENDING → ACCEPTING; the database
+   * (Match.challengeId UNIQUE) decides whether a match exists. Either a
+   * transition is returned, or ChallengeAcceptFailedError carries the cleanup.
+   */
+  async accept(
+    userId: string,
+    challengeId: string,
+    commandId: string,
+  ): Promise<ChallengeTransition & { duplicate: boolean }> {
     const duplicate = await this.commandResult(commandId, userId);
-    if (duplicate) return { challenge: await this.viewWithDurableMatch(duplicate.challengeId), duplicate: true };
-    const existingMatch = await this.matchCreation.findByChallengeId(challengeId);
-    if (existingMatch) {
-      const cleaned = await this.acceptedCleanup(challengeId, existingMatch).catch(() => null);
-      await this.storeCommand(commandId, userId, { challengeId });
-      this.logger.log(`challenge_accept_existing_match_recovered challenge=${challengeId} command=${commandId} match=${existingMatch.id}`);
-      return { challenge: cleaned?.challenge ?? { ...(await this.view(challengeId)), status: 'ACCEPTED', match: existingMatch }, duplicate: false };
+    const existing = await this.findMatch(challengeId);
+    if (existing) {
+      if (!existing.participants?.some((participant) => participant.userId === userId)) {
+        throw new ForbiddenException({
+          code: 'CHALLENGE_NOT_OPPONENT',
+          message: 'Only opponent can accept.',
+        });
+      }
+      const transition = await this.markAccepted(challengeId, existing);
+      await this.storeCommand(commandId, userId, challengeId);
+      return { ...transition, duplicate: Boolean(duplicate) };
     }
+    if (duplicate)
+      throw new ConflictException({
+        code: 'CHALLENGE_NOT_PENDING',
+        message: 'Challenge is no longer pending.',
+      });
 
-    const challenge = await this.requirePending(challengeId);
-    if (challenge.opponentId !== userId) throw new ForbiddenException({ code: 'CHALLENGE_NOT_OPPONENT', message: 'Only opponent can accept.' });
-    if (Date.parse(challenge.expiresAt) <= Date.now()) return this.expire(challengeId, commandId, userId);
-    await this.assertReservations(challenge);
+    const challenge = await this.requireRecord(challengeId);
+    if (challenge.opponentId !== userId)
+      throw new ForbiddenException({
+        code: 'CHALLENGE_NOT_OPPONENT',
+        message: 'Only opponent can accept.',
+      });
 
-    const claimed = await this.claimAccept(challenge);
-    if (!claimed) throw new ConflictException({ code: 'CHALLENGE_NOT_PENDING', message: 'Challenge is no longer pending.' });
+    const claim = (await this.redis.raw().eval(CLAIM_ACCEPT_SCRIPT, {
+      keys: [
+        this.challengeKey(challengeId),
+        this.reservationKey(challenge.challengerId),
+        this.reservationKey(challenge.opponentId),
+      ],
+      arguments: [challengeId, String(Date.now()), String(RECORD_TTL_SECONDS)],
+    })) as string;
+    if (claim === 'CHALLENGE_EXPIRED') {
+      const expired = await this.finish(challenge, 'EXPIRED', 'challenge:expired');
+      throw new ChallengeAcceptFailedError(
+        new ConflictException({ code: 'CHALLENGE_EXPIRED', message: 'Challenge has expired.' }),
+        expired ?? this.emptyTransition(challenge, 'challenge:expired'),
+      );
+    }
+    if (claim !== 'OK')
+      throw new ConflictException({ code: claim, message: 'Challenge is no longer pending.' });
 
-    this.logger.log(`challenge_accept_started challenge=${challenge.id} command=${commandId} challenger=${challenge.challengerId} opponent=${challenge.opponentId} mode=${challenge.gameModeId}`);
+    this.logger.log(`challenge_accept_started challenge=${challengeId} command=${commandId}`);
+    let match: MatchSummary;
     try {
-      const match = await this.matchCreation.createSecuredMatch({
+      match = (await this.matchCreation.createSecuredMatch({
         gameModeId: challenge.gameModeId,
         playerIds: [challenge.challengerId, challenge.opponentId],
-        challengeId: challenge.id,
+        challengeId,
         source: 'CHALLENGE',
-      });
-      const accepted = await this.acceptedCleanup(challenge.id, match);
-      this.logger.log(`challenge_match_created challenge=${challenge.id} command=${commandId} match=${match.id} session=${match.sessionCode}`);
-      await this.storeCommand(commandId, userId, { challengeId });
-      return { challenge: accepted.challenge, duplicate: false };
+      })) as MatchSummary;
     } catch (error) {
-      this.logger.warn(`challenge_accept_failed challenge=${challenge.id} command=${commandId} reason=${error instanceof Error ? error.message : 'unknown'}`);
-      const recovery = await this.acceptFailed(challenge).catch(() => null);
-      if (recovery) {
-        Object.assign(error instanceof Error ? error : Object.create(null), { lobbyRecovery: recovery });
+      // The transaction may have committed even though the call failed.
+      const committed = await this.findMatch(challengeId).catch(() => null);
+      if (!committed) {
+        this.logger.warn(
+          `challenge_accept_failed challenge=${challengeId} reason=${error instanceof Error ? error.message : 'unknown'}`,
+        );
+        throw new ChallengeAcceptFailedError(error, await this.releaseFailedAccept(challenge));
       }
-      if (error instanceof BadRequestException) throw error;
-      throw error;
+      match = committed;
     }
+
+    const transition = await this.markAccepted(challengeId, match);
+    await this.storeCommand(commandId, userId, challengeId);
+    this.logger.log(`challenge_match_created challenge=${challengeId} match=${match.id}`);
+    return { ...transition, duplicate: false };
   }
 
-  async reject(userId: string, challengeId: string, commandId: string): Promise<{ challenge: ChallengeView; duplicate: boolean }> {
-    const duplicate = await this.commandResult(commandId, userId);
-    if (duplicate) return { challenge: await this.view(duplicate.challengeId), duplicate: true };
-    const challenge = await this.requirePending(challengeId);
-    if (challenge.opponentId !== userId) throw new ForbiddenException({ code: 'CHALLENGE_NOT_OPPONENT', message: 'Only opponent can reject.' });
-    const rejected = await this.terminal(challenge, 'REJECTED');
-    await this.storeCommand(commandId, userId, { challengeId });
-    return { challenge: rejected.challenge, duplicate: false };
+  async reject(
+    userId: string,
+    challengeId: string,
+    commandId: string,
+  ): Promise<ChallengeTransition & { duplicate: boolean }> {
+    return this.userTerminal(
+      userId,
+      challengeId,
+      commandId,
+      'opponentId',
+      'REJECTED',
+      'challenge:rejected',
+    );
   }
 
-  async cancel(userId: string, challengeId: string, commandId: string = randomUUID()): Promise<{ challenge: ChallengeView; duplicate: boolean }> {
-    const duplicate = await this.commandResult(commandId, userId);
-    if (duplicate) return { challenge: await this.view(duplicate.challengeId), duplicate: true };
-    const challenge = await this.requirePending(challengeId);
-    if (challenge.challengerId !== userId) throw new ForbiddenException({ code: 'CHALLENGE_NOT_CHALLENGER', message: 'Only challenger can cancel.' });
-    const cancelled = await this.terminal(challenge, 'CANCELLED');
-    await this.storeCommand(commandId, userId, { challengeId });
-    return { challenge: cancelled.challenge, duplicate: false };
+  async cancel(
+    userId: string,
+    challengeId: string,
+    commandId: string,
+  ): Promise<ChallengeTransition & { duplicate: boolean }> {
+    return this.userTerminal(
+      userId,
+      challengeId,
+      commandId,
+      'challengerId',
+      'CANCELLED',
+      'challenge:cancelled',
+    );
   }
 
-  async expireDue(nowMs = Date.now()): Promise<ChallengeView[]> {
-    const ids = await this.redis.raw().zRangeByScore(this.expiresKey(), 0, nowMs, { LIMIT: { offset: 0, count: 25 } });
-    const expired: ChallengeView[] = [];
-    for (const id of ids) {
-      try {
-        const result = await this.expire(id);
-        expired.push(result.challenge);
-      } catch {
-        await this.redis.raw().zRem(this.expiresKey(), id);
-      }
-    }
-    return expired;
-  }
-
-  async cancelForUser(userId: string): Promise<ChallengeView | null> {
-    const challengeId = await this.redis.raw().get(this.challengeUserKey(userId));
+  /** Disconnect/leave: cancel a PENDING challenge. An in-flight accept is left to finish. */
+  async cancelForUser(userId: string): Promise<ChallengeTransition | null> {
+    const challengeId = await this.redis.raw().get(this.reservationKey(userId));
     if (!challengeId) return null;
     const challenge = await this.redis.getJson<ChallengeRecord>(this.challengeKey(challengeId));
-    if (!challenge || challenge.status !== 'PENDING') return null;
-    return (await this.terminal(challenge, 'CANCELLED')).challenge;
+    if (!challenge) return null;
+    return this.finish(challenge, 'CANCELLED', 'challenge:cancelled', { excludeUserId: userId });
   }
 
   async activeForUser(userId: string): Promise<ChallengeView | null> {
-    const challengeId = await this.redis.raw().get(this.challengeUserKey(userId));
+    const challengeId = await this.redis.raw().get(this.reservationKey(userId));
     if (!challengeId) return null;
     const challenge = await this.redis.getJson<ChallengeRecord>(this.challengeKey(challengeId));
-    return challenge ? this.toView(challenge) : null;
+    return challenge && (challenge.status === 'PENDING' || challenge.status === 'ACCEPTING')
+      ? this.toView(challenge)
+      : null;
   }
 
-  private async expire(challengeId: string, commandId?: string, userId?: string): Promise<{ challenge: ChallengeView; duplicate: boolean }> {
-    const challenge = await this.requirePending(challengeId);
-    const expired = await this.terminal(challenge, 'EXPIRED');
-    if (commandId && userId) await this.storeCommand(commandId, userId, { challengeId });
-    return { challenge: expired.challenge, duplicate: false };
-  }
-
-  private async terminal(challenge: ChallengeRecord, status: Exclude<ChallengeStatus, 'PENDING'>): Promise<{ challenge: ChallengeView }> {
-    const updated: ChallengeRecord = { ...challenge, status };
-    const readyScore = Date.now();
-    const result = await this.redis.raw().eval(this.terminalScript(), {
-      keys: [
-        this.challengeKey(challenge.id),
-        this.challengeUserKey(challenge.challengerId),
-        this.challengeUserKey(challenge.opponentId),
-        this.userKey(challenge.challengerId),
-        this.userKey(challenge.opponentId),
-        this.readyKey(challenge.gameModeId),
-        this.expiresKey(),
-      ],
-      arguments: [challenge.id, status, JSON.stringify(updated), String(readyScore), new Date(readyScore).toISOString()],
-    }) as string;
-    if (result !== 'OK' && result !== 'ALREADY_TERMINAL') throw new ConflictException({ code: result, message: 'Challenge state changed.' });
-    return { challenge: await this.view(challenge.id) };
-  }
-
-  private async requirePending(challengeId: string): Promise<ChallengeRecord> {
-    const challenge = await this.redis.getJson<ChallengeRecord>(this.challengeKey(challengeId));
-    if (!challenge) throw new NotFoundException({ code: 'CHALLENGE_NOT_FOUND', message: 'Challenge not found.' });
-    if (challenge.status !== 'PENDING') throw new ConflictException({ code: 'CHALLENGE_NOT_PENDING', message: 'Challenge is no longer pending.' });
-    return challenge;
-  }
-
-  private async claimAccept(challenge: ChallengeRecord): Promise<boolean> {
-    const accepting: ChallengeRecord = { ...challenge, status: 'ACCEPTING' };
-    const result = await this.redis.raw().eval(this.claimAcceptScript(), {
-      keys: [
-        this.challengeKey(challenge.id),
-        this.challengeUserKey(challenge.challengerId),
-        this.challengeUserKey(challenge.opponentId),
-      ],
-      arguments: [challenge.id, JSON.stringify(accepting), String(Date.now()), String(Date.parse(challenge.expiresAt))],
-    }) as string;
-    return result === 'OK';
-  }
-
-  private async acceptedCleanup(challengeId: string, match: unknown): Promise<{ challenge: ChallengeView }> {
-    const challenge = await this.redis.getJson<ChallengeRecord>(this.challengeKey(challengeId));
-    if (!challenge) {
-      return { challenge: { id: challengeId, gameModeId: '', challengerId: '', opponentId: '', status: 'ACCEPTED', createdAt: new Date().toISOString(), expiresAt: new Date().toISOString(), match } };
-    }
-    const accepted: ChallengeRecord = { ...challenge, status: 'ACCEPTED', match };
-    const result = await this.redis.raw().eval(this.acceptedCleanupScript(), {
-      keys: [
-        this.challengeKey(challenge.id),
-        this.challengeUserKey(challenge.challengerId),
-        this.challengeUserKey(challenge.opponentId),
-        this.userKey(challenge.challengerId),
-        this.userKey(challenge.opponentId),
-        this.readyKey(challenge.gameModeId),
-        this.expiresKey(),
-      ],
-      arguments: [challenge.id, JSON.stringify(accepted)],
-    }) as string;
-    if (result !== 'OK' && result !== 'ALREADY_ACCEPTED') throw new ConflictException({ code: result, message: 'Challenge cleanup failed.' });
-    this.logger.log(`challenge_cleanup_completed challenge=${challenge.id} match=${(match as any)?.id ?? '-'}`);
-    return { challenge: await this.viewWithDurableMatch(challenge.id) };
-  }
-
-  private async acceptFailed(challenge: ChallengeRecord): Promise<AcceptFailureRecovery> {
-    await this.terminal({ ...challenge, status: 'PENDING' }, 'CANCELLED');
-    const available: LobbyPlayerView[] = [];
-    const leftUserIds: string[] = [];
-    const playerIds = [challenge.challengerId, challenge.opponentId];
-    const committedRows = await this.prisma.matchParticipant.findMany({
-      where: { userId: { in: playerIds }, match: { status: { in: COMMITTED_MATCH_STATUSES } } },
-      select: { userId: true, matchId: true, match: { select: { status: true } } },
-    });
-    const committedByUser = new Map(committedRows.map((row) => [row.userId, row]));
-
-    for (const userId of playerIds) {
-      if (committedByUser.has(userId)) {
-        await this.lobby.leave(userId).catch(() => undefined);
-        leftUserIds.push(userId);
-        continue;
+  /** Periodic sweep: expire unanswered challenges and resolve stuck accepts. */
+  async sweep(nowMs = Date.now()): Promise<ChallengeTransition[]> {
+    const ids = await this.redis
+      .raw()
+      .zRangeByScore(this.expiresKey(), 0, nowMs, { LIMIT: { offset: 0, count: 25 } });
+    const transitions: ChallengeTransition[] = [];
+    for (const id of ids) {
+      try {
+        const transition = await this.sweepOne(id, nowMs);
+        if (transition) transitions.push(transition);
+      } catch (error) {
+        this.logger.warn(
+          `challenge_sweep_failed challenge=${id} reason=${(error as Error).message}`,
+        );
       }
-      const restored = await this.lobby.restoreReady([userId], challenge.gameModeId);
-      available.push(...restored);
     }
+    return transitions;
+  }
 
-    const view = await this.view(challenge.id).catch(() => ({
-      ...challenge,
-      status: 'CANCELLED' as const,
-    }));
+  private async sweepOne(id: string, nowMs: number): Promise<ChallengeTransition | null> {
+    const challenge = await this.redis.getJson<ChallengeRecord>(this.challengeKey(id));
+    if (!challenge || (challenge.status !== 'PENDING' && challenge.status !== 'ACCEPTING')) {
+      await this.redis.raw().zRem(this.expiresKey(), id);
+      return null;
+    }
+    if (challenge.status === 'PENDING')
+      return this.finish(challenge, 'EXPIRED', 'challenge:expired');
+    if (nowMs - (challenge.acceptingAtMs ?? 0) < STALE_ACCEPTING_MS) return null;
+
+    // The accepting process died. PostgreSQL decides the outcome.
+    const match = await this.findMatch(id);
+    if (match) return this.markAccepted(id, match);
+    this.logger.warn(`challenge_stale_accept_released challenge=${id}`);
+    return this.releaseFailedAccept(challenge);
+  }
+
+  private async userTerminal(
+    userId: string,
+    challengeId: string,
+    commandId: string,
+    role: 'challengerId' | 'opponentId',
+    status: 'REJECTED' | 'CANCELLED',
+    event: ChallengeEventName,
+  ): Promise<ChallengeTransition & { duplicate: boolean }> {
+    const challenge = await this.requireRecord(challengeId);
+    const duplicate = await this.commandResult(commandId, userId);
+    if (duplicate && challenge.status === status) {
+      return { ...this.emptyTransition(await this.toView(challenge), event), duplicate: true };
+    }
+    if (challenge[role] !== userId) {
+      throw new ForbiddenException({
+        code: role === 'opponentId' ? 'CHALLENGE_NOT_OPPONENT' : 'CHALLENGE_NOT_CHALLENGER',
+        message: 'You cannot change this challenge.',
+      });
+    }
+    const transition = await this.finish(challenge, status, event);
+    if (!transition)
+      throw new ConflictException({
+        code: 'CHALLENGE_NOT_PENDING',
+        message: 'Challenge is no longer pending.',
+      });
+    await this.storeCommand(commandId, userId, challengeId);
+    return { ...transition, duplicate: false };
+  }
+
+  /**
+   * Atomically end a challenge and return CHALLENGED players to READY. Returns
+   * null when the challenge already left PENDING (or is ACCEPTING and
+   * `allowAccepting` is not set).
+   */
+  private async finish(
+    challenge: ChallengeRecord,
+    status: 'REJECTED' | 'CANCELLED' | 'EXPIRED',
+    event: ChallengeEventName,
+    options: { allowAccepting?: boolean; excludeUserId?: string } = {},
+  ): Promise<ChallengeTransition | null> {
+    const now = Date.now();
+    const result = (await this.redis.raw().eval(TERMINAL_SCRIPT, {
+      keys: [
+        this.challengeKey(challenge.id),
+        this.reservationKey(challenge.challengerId),
+        this.reservationKey(challenge.opponentId),
+        this.contextKey(challenge.challengerId),
+        this.contextKey(challenge.opponentId),
+        this.readyKey(challenge.gameModeId),
+        this.expiresKey(),
+      ],
+      arguments: [
+        challenge.id,
+        status,
+        String(RECORD_TTL_SECONDS),
+        String(now),
+        new Date(now).toISOString(),
+        options.allowAccepting ? '1' : '0',
+        options.excludeUserId ?? '',
+        String(LOBBY_TTL_SECONDS),
+      ],
+    })) as string | string[];
+    if (!Array.isArray(result)) return null;
+    const restoredIds = result.slice(1);
     return {
-      gameModeId: challenge.gameModeId,
-      challenge: view,
-      available,
-      leftUserIds,
+      event,
+      challenge: await this.toView({ ...challenge, status }),
+      restoredPlayers: await this.lobby.playerViews(restoredIds),
+      leftUserIds: [],
+      matchReady: [],
     };
   }
 
-  private async assertReservations(challenge: ChallengeRecord): Promise<void> {
-    const [a, b] = await Promise.all([
-      this.redis.raw().get(this.challengeUserKey(challenge.challengerId)),
-      this.redis.raw().get(this.challengeUserKey(challenge.opponentId)),
-    ]);
-    if (a !== challenge.id || b !== challenge.id) {
-      throw new ConflictException({ code: 'CHALLENGE_NOT_PENDING', message: 'Challenge reservation is missing.' });
+  /** Record the durable match on the challenge and take both players out of the lobby. Idempotent. */
+  private async markAccepted(
+    challengeId: string,
+    match: MatchSummary,
+  ): Promise<ChallengeTransition> {
+    const participants = [...(match.participants ?? [])].sort((a, b) => a.seat - b.seat);
+    const stored = await this.redis.getJson<ChallengeRecord>(this.challengeKey(challengeId));
+    const record: ChallengeRecord = stored ?? {
+      id: challengeId,
+      gameModeId: typeof match.gameModeId === 'string' ? match.gameModeId : '',
+      challengerId: participants[0]?.userId ?? '',
+      opponentId: participants[1]?.userId ?? '',
+      status: 'ACCEPTED',
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date().toISOString(),
+      expiresAtMs: Date.now(),
+    };
+    if (stored) {
+      await this.redis.raw().eval(ACCEPTED_SCRIPT, {
+        keys: [
+          this.challengeKey(challengeId),
+          this.reservationKey(record.challengerId),
+          this.reservationKey(record.opponentId),
+          this.contextKey(record.challengerId),
+          this.contextKey(record.opponentId),
+          this.readyKey(record.gameModeId),
+          this.expiresKey(),
+        ],
+        arguments: [challengeId, match.id, String(RECORD_TTL_SECONDS)],
+      });
     }
+    const playerIds = [record.challengerId, record.opponentId];
+    return {
+      event: 'challenge:accepted',
+      challenge: {
+        ...(await this.toView({ ...record, status: 'ACCEPTED', matchId: match.id })),
+        match,
+      },
+      restoredPlayers: [],
+      leftUserIds: playerIds,
+      matchReady: playerIds.map((userId) => ({ userId, match })),
+    };
+  }
+
+  /**
+   * Match creation failed: cancel (allowed from ACCEPTING), keep eligible
+   * players READY, and move players that already hold another match out of
+   * the lobby and back to that match.
+   */
+  private async releaseFailedAccept(challenge: ChallengeRecord): Promise<ChallengeTransition> {
+    const transition =
+      (await this.finish(challenge, 'CANCELLED', 'challenge:cancelled', {
+        allowAccepting: true,
+      })) ??
+      this.emptyTransition(
+        await this.toView({ ...challenge, status: 'CANCELLED' }),
+        'challenge:cancelled',
+      );
+
+    const committed = await this.prisma.matchParticipant.findMany({
+      where: {
+        userId: { in: [challenge.challengerId, challenge.opponentId] },
+        match: { status: { in: COMMITTED_MATCH_STATUSES } },
+      },
+      select: { userId: true },
+    });
+    for (const { userId } of committed) {
+      await this.lobby.leave(userId).catch(() => undefined);
+      transition.leftUserIds.push(userId);
+      const activeMatch = await this.lobby.activeMatchForUser(userId).catch(() => null);
+      if (activeMatch) transition.matchReady.push({ userId, match: activeMatch });
+    }
+    transition.restoredPlayers = transition.restoredPlayers.filter(
+      (player) => !transition.leftUserIds.includes(player.userId),
+    );
+    return transition;
+  }
+
+  private async findMatch(challengeId: string): Promise<MatchSummary | null> {
+    return (await this.matchCreation.findByChallengeId(challengeId)) as MatchSummary | null;
+  }
+
+  private emptyTransition(
+    challenge: ChallengeView | ChallengeRecord,
+    event: ChallengeEventName,
+  ): ChallengeTransition {
+    return { event, challenge, restoredPlayers: [], leftUserIds: [], matchReady: [] };
+  }
+
+  private async requireRecord(challengeId: string): Promise<ChallengeRecord> {
+    const challenge = await this.redis.getJson<ChallengeRecord>(this.challengeKey(challengeId));
+    if (!challenge)
+      throw new NotFoundException({ code: 'CHALLENGE_NOT_FOUND', message: 'Challenge not found.' });
+    return challenge;
   }
 
   private async view(challengeId: string): Promise<ChallengeView> {
-    const challenge = await this.redis.getJson<ChallengeRecord>(this.challengeKey(challengeId));
-    if (!challenge) throw new NotFoundException({ code: 'CHALLENGE_NOT_FOUND', message: 'Challenge not found.' });
-    return this.toView(challenge);
-  }
-
-  private async viewWithDurableMatch(challengeId: string): Promise<ChallengeView> {
-    const view = await this.view(challengeId);
-    if (view.status === 'ACCEPTED' && !view.match) {
-      const match = await this.matchCreation.findByChallengeId(challengeId);
-      if (match) return { ...view, match };
-    }
-    return view;
+    return this.toView(await this.requireRecord(challengeId));
   }
 
   private async toView(challenge: ChallengeRecord): Promise<ChallengeView> {
-    const [challenger, opponent] = await Promise.all([
-      this.prisma.user.findUnique({ where: { id: challenge.challengerId }, select: { fullName: true } }),
-      this.prisma.user.findUnique({ where: { id: challenge.opponentId }, select: { fullName: true } }),
-    ]);
-    return { ...challenge, challengerName: challenger?.fullName, opponentName: opponent?.fullName };
-  }
-
-  private async assertActive(userId: string): Promise<void> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { status: true } });
-    if (!user || user.status !== UserStatus.ACTIVE) throw new ConflictException({ code: 'CHALLENGE_NOT_ALLOWED', message: 'Player is not active.' });
-  }
-
-  private async assertNoCommittedMatch(playerIds: string[]): Promise<void> {
-    const active = await this.prisma.matchParticipant.findFirst({
-      where: { userId: { in: playerIds }, match: { status: { in: COMMITTED_MATCH_STATUSES } } },
-      select: { userId: true, matchId: true, match: { select: { status: true } } },
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: [challenge.challengerId, challenge.opponentId] } },
+      select: { id: true, fullName: true },
     });
-    if (active) {
-      this.logger.warn(
-        `operation=CHALLENGE_CREATE reason=LOBBY_ACTIVE_MATCH blockedUserId=${active.userId} blockingMatchId=${active.matchId} blockingStatus=${active.match.status}`,
-      );
-      throw new ConflictException({
-        code: 'LOBBY_ACTIVE_MATCH',
-        message: isRecoverableMatchStatus(active.match.status)
-          ? 'Player is already in a match.'
-          : 'Player already has an open match entry.',
-      });
-    }
+    const name = (id: string) => users.find((user) => user.id === id)?.fullName;
+    return {
+      ...challenge,
+      challengerName: name(challenge.challengerId),
+      opponentName: name(challenge.opponentId),
+    };
   }
 
-  private async assertModeEnabled(gameModeId: string): Promise<void> {
-    const mode = await this.prisma.gameMode.findUnique({ where: { id: gameModeId }, include: { game: true } });
-    if (!mode || !mode.enabled || !mode.game.enabled) throw new ConflictException({ code: 'LOBBY_MODE_DISABLED', message: 'Mode is disabled.' });
-  }
-
-  private async commandResult(commandId: string, userId: string): Promise<{ challengeId: string } | null> {
+  private async commandResult(
+    commandId: string,
+    userId: string,
+  ): Promise<{ challengeId: string } | null> {
     return this.redis.getJson<{ challengeId: string }>(this.commandKey(userId, commandId));
   }
 
-  private async storeCommand(commandId: string, userId: string, value: { challengeId: string }): Promise<void> {
-    await this.redis.setJson(this.commandKey(userId, commandId), value, this.commandTtlSeconds);
+  private async storeCommand(
+    commandId: string,
+    userId: string,
+    challengeId: string,
+  ): Promise<void> {
+    await this.redis.setJson(
+      this.commandKey(userId, commandId),
+      { challengeId },
+      COMMAND_TTL_SECONDS,
+    );
   }
 
-  private reserveScript(): string {
-    return `
+  private challengeKey(id: string): string {
+    return this.redis.key('challenge', id);
+  }
+  private reservationKey(userId: string): string {
+    return this.redis.key('challenge', 'user', userId);
+  }
+  private expiresKey(): string {
+    return this.redis.key('challenge', 'expires');
+  }
+  private commandKey(userId: string, commandId: string): string {
+    return this.redis.key('challenge', 'cmd', userId, commandId);
+  }
+  private contextKey(userId: string): string {
+    return this.redis.key('lobby', 'user', userId);
+  }
+  private readyKey(gameModeId: string): string {
+    return this.redis.key('lobby', gameModeId, 'ready');
+  }
+}
+
+// KEYS: ctxA ctxB resA resB challenge ready expires
+// ARGV: recordJson id expiresAtMs recordTtl ctxTtl
+const RESERVE_SCRIPT = `
 local aCtx = redis.call('get', KEYS[1])
 local bCtx = redis.call('get', KEYS[2])
 if not aCtx or not bCtx then return 'LOBBY_NOT_JOINED' end
@@ -345,73 +507,79 @@ if a.state ~= 'READY' then return 'LOBBY_NOT_READY' end
 if b.state ~= 'READY' then return 'CHALLENGE_TARGET_NOT_READY' end
 if redis.call('exists', KEYS[3]) == 1 or redis.call('exists', KEYS[4]) == 1 then return 'LOBBY_USER_BUSY' end
 local record = cjson.decode(ARGV[1])
+local ttl = tonumber(ARGV[4])
 a.state = 'CHALLENGED'
 b.state = 'CHALLENGED'
-redis.call('set', KEYS[3], ARGV[2], 'EX', 15)
-redis.call('set', KEYS[4], ARGV[2], 'EX', 15)
-redis.call('set', KEYS[5], ARGV[1], 'EX', 20)
-redis.call('zrem', KEYS[6], record.challengerId)
-redis.call('zrem', KEYS[6], record.opponentId)
-redis.call('set', KEYS[1], cjson.encode(a), 'EX', 180)
-redis.call('set', KEYS[2], cjson.encode(b), 'EX', 180)
+redis.call('set', KEYS[3], ARGV[2], 'EX', ttl)
+redis.call('set', KEYS[4], ARGV[2], 'EX', ttl)
+redis.call('set', KEYS[5], ARGV[1], 'EX', ttl)
+redis.call('zrem', KEYS[6], record.challengerId, record.opponentId)
+redis.call('set', KEYS[1], cjson.encode(a), 'EX', tonumber(ARGV[5]))
+redis.call('set', KEYS[2], cjson.encode(b), 'EX', tonumber(ARGV[5]))
 redis.call('zadd', KEYS[7], ARGV[3], ARGV[2])
 return 'OK'`;
-  }
 
-  private terminalScript(): string {
-    return `
-local raw = redis.call('get', KEYS[1])
-if not raw then return 'CHALLENGE_NOT_FOUND' end
-local record = cjson.decode(raw)
-if record.status ~= 'PENDING' and not (record.status == 'ACCEPTING' and ARGV[2] == 'CANCELLED') then return 'ALREADY_TERMINAL' end
-record.status = ARGV[2]
-redis.call('set', KEYS[1], ARGV[3], 'EX', 300)
-redis.call('del', KEYS[2])
-redis.call('del', KEYS[3])
-redis.call('zrem', KEYS[7], ARGV[1])
-local aCtx = redis.call('get', KEYS[4])
-local bCtx = redis.call('get', KEYS[5])
-if ARGV[2] == 'REJECTED' or ARGV[2] == 'CANCELLED' or ARGV[2] == 'EXPIRED' then
-  if aCtx then local a = cjson.decode(aCtx); a.state = 'READY'; a.readyAt = ARGV[5]; redis.call('set', KEYS[4], cjson.encode(a), 'EX', 180); redis.call('zadd', KEYS[6], ARGV[4], record.challengerId) end
-  if bCtx then local b = cjson.decode(bCtx); b.state = 'READY'; b.readyAt = ARGV[5]; redis.call('set', KEYS[5], cjson.encode(b), 'EX', 180); redis.call('zadd', KEYS[6], ARGV[4], record.opponentId) end
-end
-return 'OK'`;
-  }
-
-  private claimAcceptScript(): string {
-    return `
+// KEYS: challenge resA resB
+// ARGV: id nowMs recordTtl
+const CLAIM_ACCEPT_SCRIPT = `
 local raw = redis.call('get', KEYS[1])
 if not raw then return 'CHALLENGE_NOT_FOUND' end
 local record = cjson.decode(raw)
 if record.status ~= 'PENDING' then return 'CHALLENGE_NOT_PENDING' end
-if tonumber(ARGV[4]) <= tonumber(ARGV[3]) then return 'CHALLENGE_EXPIRED' end
+if tonumber(record.expiresAtMs) <= tonumber(ARGV[2]) then return 'CHALLENGE_EXPIRED' end
 if redis.call('get', KEYS[2]) ~= ARGV[1] or redis.call('get', KEYS[3]) ~= ARGV[1] then return 'CHALLENGE_NOT_PENDING' end
-redis.call('set', KEYS[1], ARGV[2], 'EX', 60)
+record.status = 'ACCEPTING'
+record.acceptingAtMs = tonumber(ARGV[2])
+redis.call('set', KEYS[1], cjson.encode(record), 'EX', tonumber(ARGV[3]))
 return 'OK'`;
-  }
 
-  private acceptedCleanupScript(): string {
-    return `
+// KEYS: challenge resA resB ctxA ctxB ready expires
+// ARGV: id status recordTtl readyScore readyIso allowAccepting excludeUserId ctxTtl
+// Returns {'OK', restoredUserId...} or an error code string.
+const TERMINAL_SCRIPT = `
+local raw = redis.call('get', KEYS[1])
+if not raw then return 'CHALLENGE_NOT_FOUND' end
+local record = cjson.decode(raw)
+if record.status == 'ACCEPTING' and ARGV[6] ~= '1' then return 'CHALLENGE_ACCEPTING' end
+if record.status ~= 'PENDING' and record.status ~= 'ACCEPTING' then return 'ALREADY_TERMINAL' end
+record.status = ARGV[2]
+redis.call('set', KEYS[1], cjson.encode(record), 'EX', tonumber(ARGV[3]))
+for i = 2, 3 do
+  if redis.call('get', KEYS[i]) == ARGV[1] then redis.call('del', KEYS[i]) end
+end
+redis.call('zrem', KEYS[7], ARGV[1])
+local restored = {'OK'}
+local function restore(ctxKey, userId)
+  if userId == ARGV[7] then return end
+  local ctxRaw = redis.call('get', ctxKey)
+  if not ctxRaw then return end
+  local ctx = cjson.decode(ctxRaw)
+  if ctx.state ~= 'CHALLENGED' or ctx.gameModeId ~= record.gameModeId then return end
+  ctx.state = 'READY'
+  ctx.readyAt = ARGV[5]
+  redis.call('set', ctxKey, cjson.encode(ctx), 'EX', tonumber(ARGV[8]))
+  redis.call('zadd', KEYS[6], ARGV[4], userId)
+  table.insert(restored, userId)
+end
+restore(KEYS[4], record.challengerId)
+restore(KEYS[5], record.opponentId)
+return restored`;
+
+// KEYS: challenge resA resB ctxA ctxB ready expires
+// ARGV: id matchId recordTtl
+// A durable match exists, so this applies from any status.
+const ACCEPTED_SCRIPT = `
 local raw = redis.call('get', KEYS[1])
 if not raw then return 'CHALLENGE_NOT_FOUND' end
 local record = cjson.decode(raw)
 if record.status == 'ACCEPTED' then return 'ALREADY_ACCEPTED' end
-if record.status ~= 'ACCEPTING' and record.status ~= 'PENDING' then return 'ALREADY_TERMINAL' end
-redis.call('set', KEYS[1], ARGV[2], 'EX', 300)
-redis.call('del', KEYS[2])
-redis.call('del', KEYS[3])
-redis.call('del', KEYS[4])
-redis.call('del', KEYS[5])
-redis.call('zrem', KEYS[6], record.challengerId)
-redis.call('zrem', KEYS[6], record.opponentId)
+record.status = 'ACCEPTED'
+record.matchId = ARGV[2]
+redis.call('set', KEYS[1], cjson.encode(record), 'EX', tonumber(ARGV[3]))
+for i = 2, 3 do
+  if redis.call('get', KEYS[i]) == ARGV[1] then redis.call('del', KEYS[i]) end
+end
+redis.call('del', KEYS[4], KEYS[5])
+redis.call('zrem', KEYS[6], record.challengerId, record.opponentId)
 redis.call('zrem', KEYS[7], ARGV[1])
 return 'OK'`;
-  }
-
-  private challengeKey(id: string): string { return this.redis.key('challenge', id); }
-  private challengeUserKey(userId: string): string { return this.redis.key('challenge', 'user', userId); }
-  private expiresKey(): string { return this.redis.key('challenge', 'expires'); }
-  private commandKey(userId: string, commandId: string): string { return this.redis.key('challenge', 'cmd', userId, commandId); }
-  private userKey(userId: string): string { return this.redis.key('lobby', 'user', userId); }
-  private readyKey(gameModeId: string): string { return this.redis.key('lobby', gameModeId, 'ready'); }
-}

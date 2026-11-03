@@ -1,88 +1,106 @@
-import { ConflictException } from '@nestjs/common';
-import { MatchStatus, UserStatus } from '../generated/prisma/enums';
+import { UserStatus } from '../generated/prisma/enums';
+import { createTestRedis } from '../test-utils/redis-test.util';
 import { LobbyService } from './lobby.service';
 
-describe('LobbyService eligibility', () => {
-  function createHarness(committed?: { matchId: string; status: MatchStatus } | null) {
-    const contexts = new Map<string, any>();
-    const prisma = {
-      gameMode: {
-        findUnique: jest.fn(async () => ({
-          id: 'mode-1',
-          code: 'LUDO_1V1',
-          name: 'Ludo',
-          stakeAmountMinor: 100n,
-          enabled: true,
-          game: { enabled: true },
+const MODE = 'mode-1';
+
+async function createHarness() {
+  const { redis, cleanup } = await createTestRedis();
+  const committedUsers = new Set<string>();
+  const balances = new Map<string, bigint>();
+  const prisma = {
+    gameMode: {
+      findUnique: jest.fn(async () => ({
+        id: MODE,
+        code: 'LUDO_1V1',
+        name: 'Ludo',
+        stakeAmountMinor: 100n,
+        enabled: true,
+        game: { enabled: true },
+      })),
+    },
+    user: {
+      findMany: jest.fn(async ({ where }: any) =>
+        (where.id.in as string[]).map((id) => ({
+          id,
+          fullName: `Player ${id}`,
+          status: UserStatus.ACTIVE,
+          wallet: { availableBalance: balances.get(id) ?? 1_000n },
         })),
-      },
-      user: {
-        findUnique: jest.fn(async () => ({ status: UserStatus.ACTIVE, fullName: 'Player' })),
-      },
-      matchParticipant: {
-        findFirst: jest.fn(async () =>
-          committed
-            ? { matchId: committed.matchId, match: { status: committed.status } }
-            : null,
-        ),
-      },
-    };
-    const redisRaw = {
-      multi: () => {
-        const ops: Array<() => void> = [];
-        const chain: any = {
-          zAdd: () => chain,
-          expire: () => chain,
-          set: (_key: string, value: string) => {
-            ops.push(() => contexts.set('user', JSON.parse(value)));
-            return chain;
-          },
-          sAdd: () => chain,
-          zRem: () => chain,
-          sRem: () => chain,
-          del: () => chain,
-          exec: async () => {
-            for (const op of ops) op();
-          },
-        };
-        return chain;
-      },
-    };
-    const redis = {
-      raw: () => redisRaw,
-      key: (...parts: string[]) => parts.join(':'),
-      getJson: async () => contexts.get('ctx') ?? null,
-      setJson: async () => undefined,
-    };
-    const service = new LobbyService(prisma as any, redis as any);
-    return { service, prisma, contexts };
-  }
+      ),
+    },
+    matchParticipant: {
+      findFirst: jest.fn(async ({ where }: any) => {
+        const ids: string[] = typeof where.userId === 'string' ? [where.userId] : where.userId.in;
+        const userId = ids.find((id) => committedUsers.has(id));
+        return userId ? { userId } : null;
+      }),
+    },
+  };
+  return {
+    service: new LobbyService(prisma as any, redis),
+    redis,
+    committedUsers,
+    balances,
+    cleanup,
+  };
+}
 
-  it('allows READY when the user only has FINISHED match history', async () => {
-    const { service, contexts } = createHarness(null);
-    contexts.set('ctx', { gameModeId: 'mode-1', state: 'ONLINE', joinedAt: new Date().toISOString() });
-    await expect(service.ready('user-1')).resolves.toMatchObject({ gameModeId: 'mode-1' });
+describe('LobbyService (real Redis)', () => {
+  let h: Awaited<ReturnType<typeof createHarness>>;
+  beforeEach(async () => {
+    h = await createHarness();
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
-  it('allows READY when prior match is CANCELLED', async () => {
-    const { service, contexts, prisma } = createHarness(null);
-    contexts.set('ctx', { gameModeId: 'mode-1', state: 'ONLINE', joinedAt: new Date().toISOString() });
-    prisma.matchParticipant.findFirst.mockResolvedValue(null);
-    await expect(service.ready('user-1')).resolves.toMatchObject({ gameModeId: 'mode-1' });
+  it('marks isSelf only for the viewer and keeps room broadcasts viewer-neutral', async () => {
+    await h.service.join('A', MODE);
+    const joinedB = await h.service.join('B', MODE);
+
+    expect(joinedB.player.isSelf).toBeUndefined();
+    const snapshotForA = await h.service.snapshot('A', MODE);
+    expect(snapshotForA.players.find((p) => p.userId === 'A')?.isSelf).toBe(true);
+    expect(snapshotForA.players.find((p) => p.userId === 'B')?.isSelf).toBeUndefined();
   });
 
-  it('denies READY when user has a WAITING commitment', async () => {
-    const { service, contexts } = createHarness({ matchId: 'm-waiting', status: MatchStatus.WAITING });
-    contexts.set('ctx', { gameModeId: 'mode-1', state: 'ONLINE', joinedAt: new Date().toISOString() });
-    await expect(service.ready('user-1')).rejects.toBeInstanceOf(ConflictException);
+  it('rejoining does not duplicate membership', async () => {
+    await h.service.join('A', MODE);
+    await h.service.join('A', MODE);
+    const snapshot = await h.service.snapshot('A', MODE);
+    expect(snapshot.players.filter((p) => p.userId === 'A')).toHaveLength(1);
   });
 
-  it('join only requires an active user (committed WAITING is a READY concern)', async () => {
-    const { service, prisma } = createHarness({ matchId: 'm-waiting', status: MatchStatus.WAITING });
-    (prisma.user.findUnique as jest.Mock).mockResolvedValueOnce({ status: UserStatus.BLOCKED, fullName: 'X' });
-    await expect(service.join('user-1', 'mode-1')).rejects.toMatchObject({
-      response: { code: 'PLAYER_NOT_ELIGIBLE' },
+  it('drops players whose lobby context expired from the snapshot', async () => {
+    await h.service.join('A', MODE);
+    await h.service.join('B', MODE);
+    await h.redis.raw().del(h.redis.key('lobby', 'user', 'B'));
+
+    const snapshot = await h.service.snapshot('A', MODE);
+    expect(snapshot.players.map((p) => p.userId)).toEqual(['A']);
+    expect(await h.redis.raw().sIsMember(h.redis.key('lobby', MODE, 'online'), 'B')).toBeFalsy();
+  });
+
+  it('ready requires no committed match', async () => {
+    await h.service.join('A', MODE);
+    h.committedUsers.add('A');
+    await expect(h.service.ready('A')).rejects.toMatchObject({
+      response: { code: 'LOBBY_ACTIVE_MATCH' },
     });
-    expect(prisma.matchParticipant.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('ready requires enough balance for the stake', async () => {
+    await h.service.join('A', MODE);
+    h.balances.set('A', 50n);
+    await expect(h.service.ready('A')).rejects.toMatchObject({
+      response: { code: 'INSUFFICIENT_BALANCE_FOR_MATCH' },
+    });
+  });
+
+  it('ready then unready round-trips state', async () => {
+    await h.service.join('A', MODE);
+    expect((await h.service.ready('A')).player.state).toBe('READY');
+    expect((await h.service.unready('A')).player.state).toBe('ONLINE');
   });
 });

@@ -1,5 +1,7 @@
 import { Injectable, Logger, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
+import { ChallengeService } from '../../challenge/challenge.service';
 import { SettlementService } from '../../settlement/settlement.service';
+import { RealtimePublisherService } from '../realtime-publisher.service';
 import { TurnTimeoutService } from './turn-timeout.service';
 
 // DB5: gameplay maintenance (turn timeouts, disconnect grace, ready
@@ -22,11 +24,16 @@ export class RealtimeMaintenanceService implements OnModuleInit, OnApplicationSh
   constructor(
     private readonly timeouts: TurnTimeoutService,
     private readonly settlement: SettlementService,
+    private readonly challenges: ChallengeService,
+    private readonly publisher: RealtimePublisherService,
   ) {}
 
   onModuleInit(): void {
     this.gameplayTimer = setInterval(() => void this.tickGameplay(), GAMEPLAY_TICK_MS);
-    this.reconciliationTimer = setInterval(() => void this.tickReconciliation(), RECONCILIATION_TICK_MS);
+    this.reconciliationTimer = setInterval(
+      () => void this.tickReconciliation(),
+      RECONCILIATION_TICK_MS,
+    );
   }
 
   onApplicationShutdown(): void {
@@ -38,6 +45,11 @@ export class RealtimeMaintenanceService implements OnModuleInit, OnApplicationSh
     if (this.gameplayRunning) return;
     this.gameplayRunning = true;
     try {
+      const transitions = await this.challenges.sweep().catch((error: Error) => {
+        this.logger.warn(`Challenge sweep failed: ${error.message}`);
+        return [];
+      });
+      for (const transition of transitions) this.publisher.publishChallengeTransition(transition);
       await this.timeouts.processDueTurnTimeouts();
       await this.timeouts.processDueDisconnects();
       await this.timeouts.processReadyNoShows();

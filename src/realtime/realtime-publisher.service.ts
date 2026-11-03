@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Server } from 'socket.io';
+import { ChallengeTransition } from '../challenge/challenge.types';
 import { RuntimeExecution, REALTIME_PROTOCOL_VERSION } from './realtime.types';
 
 export const LUDO_EVENT_NAMES: Record<string, string> = {
@@ -45,14 +46,42 @@ export class RealtimePublisherService {
   }
 
   publishUser(userId: string, eventName: string, data: unknown, matchId?: string): void {
+    this.publishRoom(this.userRoom(userId), eventName, data, matchId);
+  }
+
+  publishRoom(room: string, eventName: string, data: unknown, matchId?: string): void {
     if (!this.server) return;
-    this.server.to(this.userRoom(userId)).emit(eventName, {
+    this.server.to(room).emit(eventName, {
       protocolVersion: REALTIME_PROTOCOL_VERSION,
       eventId: randomUUID(),
       serverTime: new Date().toISOString(),
       ...(matchId ? { matchId } : {}),
       data,
     });
+  }
+
+  /** Single broadcast path for every challenge outcome (user command, disconnect, sweep). */
+  publishChallengeTransition(transition: ChallengeTransition): void {
+    const { challenge, event } = transition;
+    const room = this.lobbyRoom(challenge.gameModeId);
+    for (const userId of new Set([challenge.challengerId, challenge.opponentId])) {
+      if (userId) this.publishUser(userId, event, challenge);
+    }
+    for (const player of transition.restoredPlayers) {
+      this.publishRoom(room, 'lobby:player_available', {
+        gameModeId: challenge.gameModeId,
+        player,
+      });
+    }
+    for (const userId of transition.leftUserIds) {
+      this.publishRoom(room, 'lobby:player_left', {
+        gameModeId: challenge.gameModeId,
+        player: { userId },
+      });
+    }
+    for (const { userId, match } of transition.matchReady) {
+      this.publishUser(userId, 'match:ready', { match }, match.id);
+    }
   }
 
   lobbyRoom(gameModeId: string): string {

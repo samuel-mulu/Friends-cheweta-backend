@@ -1,3 +1,6 @@
+/** Lobby context TTL; refreshed by the socket heartbeat while connected. */
+export const LOBBY_TTL_SECONDS = 180;
+
 export type LobbyPlayerState = 'ONLINE' | 'READY' | 'CHALLENGED';
 
 export type LobbyUserContext = {

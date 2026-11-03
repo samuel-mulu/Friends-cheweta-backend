@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { Server } from 'socket.io';
 import { ChallengeService } from '../challenge/challenge.service';
 import { ChallengeCommandDto, ChallengeCreateDto } from '../challenge/dto/challenge.dto';
+import { ChallengeAcceptFailedError } from '../challenge/challenge.types';
 import { ChatService } from '../chat/chat.service';
 import { LobbyChatSendDto, MatchChatHistoryDto, MatchChatSendDto } from '../chat/dto/chat.dto';
 import { LudoRuntimeCommand } from '../games/ludo/runtime';
@@ -39,7 +40,6 @@ import {
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
 export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(RealtimeGateway.name);
-  private expiryTimer?: NodeJS.Timeout;
 
   @WebSocketServer()
   server!: Server;
@@ -58,7 +58,6 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
   afterInit(server: Server): void {
     this.publisher.attach(server);
-    this.expiryTimer = setInterval(() => void this.expireChallenges(), 1000);
     this.logger.log('Realtime gateway initialized on namespace /game');
   }
 
@@ -155,7 +154,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     try {
       const user = this.requireUser(socket);
       const cancelled = await this.challenge.cancelForUser(user.id);
-      if (cancelled) await this.emitChallengeTerminal(cancelled, 'challenge:cancelled');
+      if (cancelled) this.publisher.publishChallengeTransition(cancelled);
       const result = await this.lobby.leave(user.id);
       if (result.gameModeId) {
         await socket.leave(this.publisher.lobbyRoom(result.gameModeId));
@@ -209,10 +208,13 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     try {
       const user = this.requireUser(socket);
       const result = await this.challenge.accept(user.id, dto.challengeId, dto.commandId);
-      await this.emitChallengeTerminal(result.challenge, 'challenge:accepted');
+      if (!result.duplicate) this.publisher.publishChallengeTransition(result);
       return { ok: true, commandId: dto.commandId, duplicate: result.duplicate, data: result.challenge };
     } catch (error) {
-      await this.emitAcceptFailureRecovery(error);
+      if (error instanceof ChallengeAcceptFailedError) {
+        this.publisher.publishChallengeTransition(error.transition);
+        return this.errorAck(error.reason);
+      }
       return this.errorAck(error);
     }
   }
@@ -222,7 +224,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     try {
       const user = this.requireUser(socket);
       const result = await this.challenge.reject(user.id, dto.challengeId, dto.commandId);
-      await this.emitChallengeTerminal(result.challenge, 'challenge:rejected');
+      if (!result.duplicate) this.publisher.publishChallengeTransition(result);
       return { ok: true, commandId: dto.commandId, duplicate: result.duplicate };
     } catch (error) {
       return this.errorAck(error);
@@ -234,7 +236,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     try {
       const user = this.requireUser(socket);
       const result = await this.challenge.cancel(user.id, dto.challengeId, dto.commandId);
-      await this.emitChallengeTerminal(result.challenge, 'challenge:cancelled');
+      if (!result.duplicate) this.publisher.publishChallengeTransition(result);
       return { ok: true, commandId: dto.commandId, duplicate: result.duplicate };
     } catch (error) {
       return this.errorAck(error);
@@ -474,75 +476,15 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
-  private async expireChallenges(): Promise<void> {
-    const expired = await this.challenge.expireDue().catch(() => []);
-    for (const challenge of expired) await this.emitChallengeTerminal(challenge, 'challenge:expired');
-  }
-
   private async handleLobbyDisconnect(userId: string): Promise<void> {
     const cancelled = await this.challenge.cancelForUser(userId);
-    if (cancelled) await this.emitChallengeTerminal(cancelled, 'challenge:cancelled');
+    if (cancelled) this.publisher.publishChallengeTransition(cancelled);
     const left = await this.lobby.leave(userId);
     if (left.gameModeId) {
       this.server.to(this.publisher.lobbyRoom(left.gameModeId)).emit(
         'lobby:player_left',
         this.envelope({ gameModeId: left.gameModeId, player: left.player }),
       );
-    }
-  }
-
-  private async emitChallengeTerminal(challenge: any, eventName: string): Promise<void> {
-    this.publisher.publishUser(challenge.challengerId, eventName, challenge);
-    this.publisher.publishUser(challenge.opponentId, eventName, challenge);
-    if (eventName === 'challenge:accepted') {
-      if (challenge.match) {
-        this.publisher.publishUser(challenge.challengerId, 'match:ready', { match: challenge.match }, challenge.match.id);
-        this.publisher.publishUser(challenge.opponentId, 'match:ready', { match: challenge.match }, challenge.match.id);
-      }
-      for (const userId of [challenge.challengerId, challenge.opponentId]) {
-        this.server.to(this.publisher.lobbyRoom(challenge.gameModeId)).emit(
-          'lobby:player_left',
-          this.envelope({ gameModeId: challenge.gameModeId, player: { userId } }),
-        );
-      }
-    } else {
-      const restored = await this.lobby.restoreReady([challenge.challengerId, challenge.opponentId], challenge.gameModeId);
-      for (const player of restored) {
-        this.server.to(this.publisher.lobbyRoom(challenge.gameModeId)).emit(
-          'lobby:player_available',
-          this.envelope({ gameModeId: challenge.gameModeId, player }),
-        );
-      }
-    }
-  }
-
-  private async emitAcceptFailureRecovery(error: unknown): Promise<void> {
-    const recovery = (error as { lobbyRecovery?: {
-      gameModeId: string;
-      challenge: any;
-      available: Array<{ userId: string }>;
-      leftUserIds: string[];
-    } })?.lobbyRecovery;
-    if (!recovery) return;
-
-    this.publisher.publishUser(recovery.challenge.challengerId, 'challenge:cancelled', recovery.challenge);
-    this.publisher.publishUser(recovery.challenge.opponentId, 'challenge:cancelled', recovery.challenge);
-
-    for (const player of recovery.available) {
-      this.server.to(this.publisher.lobbyRoom(recovery.gameModeId)).emit(
-        'lobby:player_available',
-        this.envelope({ gameModeId: recovery.gameModeId, player }),
-      );
-    }
-    for (const userId of recovery.leftUserIds) {
-      this.server.to(this.publisher.lobbyRoom(recovery.gameModeId)).emit(
-        'lobby:player_left',
-        this.envelope({ gameModeId: recovery.gameModeId, player: { userId } }),
-      );
-      const activeMatch = await this.lobby.activeMatchForUser(userId).catch(() => null);
-      if (activeMatch) {
-        this.publisher.publishUser(userId, 'match:ready', { match: activeMatch }, activeMatch.id);
-      }
     }
   }
 

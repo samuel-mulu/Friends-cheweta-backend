@@ -32,7 +32,12 @@ describe('RealtimeMaintenanceService (DB5 - independent timers)', () => {
       }),
     };
 
-    const service = new RealtimeMaintenanceService(timeouts as any, settlement as any);
+    const service = new RealtimeMaintenanceService(
+      timeouts as any,
+      settlement as any,
+      { sweep: jest.fn(async () => []) } as any,
+      { publishChallengeTransition: jest.fn() } as any,
+    );
     return {
       service,
       timeouts,
@@ -93,7 +98,12 @@ describe('RealtimeMaintenanceService (DB5 - independent timers)', () => {
       processPrematchOrphans: jest.fn(async () => 0),
     };
     const settlement = { reconcilePending: jest.fn(async () => undefined) };
-    const service = new RealtimeMaintenanceService(timeouts as any, settlement as any);
+    const service = new RealtimeMaintenanceService(
+      timeouts as any,
+      settlement as any,
+      { sweep: jest.fn(async () => []) } as any,
+      { publishChallengeTransition: jest.fn() } as any,
+    );
     service.onModuleInit();
 
     await jest.advanceTimersByTimeAsync(5000);
