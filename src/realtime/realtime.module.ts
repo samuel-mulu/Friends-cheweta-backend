@@ -3,7 +3,6 @@ import { GameEntryModule } from '../game-entry/game-entry.module';
 import { ChallengeModule } from '../challenge/challenge.module';
 import { ChatModule } from '../chat/chat.module';
 import { LobbyModule } from '../lobby/lobby.module';
-import { MatchmakingModule } from '../matchmaking/matchmaking.module';
 import { MatchHistoryModule } from '../match-history/match-history.module';
 import { SettlementModule } from '../settlement/settlement.module';
 import { LudoRuntimeRepository } from './ludo-runtime.repository';
@@ -16,7 +15,7 @@ import { RealtimeMaintenanceService } from './timeout/realtime-maintenance.servi
 import { TurnTimeoutService } from './timeout/turn-timeout.service';
 
 @Module({
-  imports: [MatchmakingModule, LobbyModule, ChallengeModule, ChatModule, GameEntryModule, SettlementModule, MatchHistoryModule],
+  imports: [LobbyModule, ChallengeModule, ChatModule, GameEntryModule, SettlementModule, MatchHistoryModule],
   providers: [
     RealtimeGateway,
     RealtimeAuthService,

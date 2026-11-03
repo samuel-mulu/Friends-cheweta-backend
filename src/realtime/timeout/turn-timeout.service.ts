@@ -219,10 +219,6 @@ export class TurnTimeoutService {
     await this.runtime.discardRuntime(matchId);
     const players = await this.prisma.matchParticipant.findMany({ where: { matchId }, select: { userId: true } });
     const cleanup = this.redis.raw().multi().zRem(this.turnQueueKey(), matchId).del(this.timingKey(matchId));
-    for (const player of players) {
-      cleanup.del(this.redis.key('matchmaking', 'assignment', player.userId));
-      cleanup.del(this.redis.key('matchmaking', 'user', player.userId));
-    }
     await cleanup.exec();
     for (const player of players) {
       this.publisher.publishUser(player.userId, 'match:cancelled', { matchId, reason: clientReason }, matchId);

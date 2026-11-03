@@ -45,8 +45,6 @@ services:
         value: "86400"
       - key: REDIS_PRESENCE_TTL_SECONDS
         value: "90"
-      - key: REDIS_MATCHMAKING_TTL_SECONDS
-        value: "600"
       - key: REDIS_LOCK_TTL_MS
         value: "5000"
       - key: JWT_ACCESS_TTL

@@ -67,10 +67,6 @@ function cloneResult(result: LudoRuntimeResult): LudoRuntimeResult {
   };
 }
 
-function fingerprint(command: LudoRuntimeCommand): string {
-  return JSON.stringify(command);
-}
-
 function ensureCommandId(commandId: string): void {
   if (!commandId.trim()) throw new Error('COMMAND_ID_REQUIRED');
 }
@@ -84,10 +80,6 @@ function ensureCommandId(commandId: string): void {
  */
 export class LudoMatchRuntime {
   private state: LudoMatchRuntimeState;
-  private readonly processedCommands = new Map<
-    string,
-    { fingerprint: string; result: LudoRuntimeResult }
-  >();
 
   constructor(
     matchId: string,
@@ -128,14 +120,8 @@ export class LudoMatchRuntime {
   }
 
   execute(command: LudoRuntimeCommand): LudoRuntimeResult {
+    // Command idempotency is enforced by the persistence layer (LudoRuntimeService).
     ensureCommandId(command.commandId);
-    const commandFingerprint = fingerprint(command);
-    const previous = this.processedCommands.get(command.commandId);
-    if (previous) {
-      if (previous.fingerprint !== commandFingerprint) throw new Error('COMMAND_ID_REUSE');
-      return cloneResult(previous.result);
-    }
-
     if (command.expectedVersion !== this.state.game.version) {
       throw new Error('MATCH_VERSION_CONFLICT');
     }
@@ -161,16 +147,11 @@ export class LudoMatchRuntime {
     }
 
     this.assertRuntimeState();
-    const result: LudoRuntimeResult = {
+    return {
       commandId: command.commandId,
       state: this.getState(),
-      events,
+      events: cloneResult({ commandId: command.commandId, state: this.state, events }).events,
     };
-    this.processedCommands.set(command.commandId, {
-      fingerprint: commandFingerprint,
-      result: cloneResult(result),
-    });
-    return cloneResult(result);
   }
 
   private rollForStart(command: RollForStartCommand): LudoRuntimeEvent[] {
@@ -281,7 +262,9 @@ export class LudoMatchRuntime {
       if (value === 6 && LUDO_CLASSIC_V1.sixGrantsExtraRoll) {
         game.turnPhase = LudoTurnPhase.WAITING_FOR_ROLL;
         game.diceValue = null;
-        events.push(this.event(LudoRuntimeEventType.EXTRA_ROLL_GRANTED, { playerId: command.playerId }));
+        events.push(
+          this.event(LudoRuntimeEventType.EXTRA_ROLL_GRANTED, { playerId: command.playerId }),
+        );
       } else {
         this.advanceTurn(events);
       }
@@ -355,7 +338,9 @@ export class LudoMatchRuntime {
 
     if (mayRollAgain) {
       next.turnPhase = LudoTurnPhase.WAITING_FOR_ROLL;
-      events.push(this.event(LudoRuntimeEventType.EXTRA_ROLL_GRANTED, { playerId: command.playerId }));
+      events.push(
+        this.event(LudoRuntimeEventType.EXTRA_ROLL_GRANTED, { playerId: command.playerId }),
+      );
       return events;
     }
 
@@ -366,9 +351,12 @@ export class LudoMatchRuntime {
   private resign(command: ResignCommand): LudoRuntimeEvent[] {
     const game = this.state.game;
     if (game.phase !== LudoMatchPhase.PLAYING) throw new Error('MATCH_NOT_PLAYING');
-    if (!game.players.some((player) => player.userId === command.playerId)) throw new Error('PLAYER_NOT_IN_MATCH');
-    if (this.state.resignedPlayerIds.includes(command.playerId)) throw new Error('PLAYER_ALREADY_RESIGNED');
-    if (game.winnerOrder.includes(command.playerId)) throw new Error('FINISHED_PLAYER_CANNOT_RESIGN');
+    if (!game.players.some((player) => player.userId === command.playerId))
+      throw new Error('PLAYER_NOT_IN_MATCH');
+    if (this.state.resignedPlayerIds.includes(command.playerId))
+      throw new Error('PLAYER_ALREADY_RESIGNED');
+    if (game.winnerOrder.includes(command.playerId))
+      throw new Error('FINISHED_PLAYER_CANNOT_RESIGN');
 
     game.version += 1;
     this.state.resignedPlayerIds.push(command.playerId);
@@ -405,10 +393,12 @@ export class LudoMatchRuntime {
     }
 
     const playerOrder = game.players.map((player) => player.userId);
-    const currentIndex = game.currentPlayerId === null ? -1 : playerOrder.indexOf(game.currentPlayerId);
+    const currentIndex =
+      game.currentPlayerId === null ? -1 : playerOrder.indexOf(game.currentPlayerId);
     let nextPlayerId: string | null = null;
     for (let step = 1; step <= playerOrder.length; step += 1) {
-      const candidate = playerOrder[(currentIndex + step + playerOrder.length) % playerOrder.length];
+      const candidate =
+        playerOrder[(currentIndex + step + playerOrder.length) % playerOrder.length];
       if (active.includes(candidate)) {
         nextPlayerId = candidate;
         break;

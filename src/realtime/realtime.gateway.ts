@@ -19,9 +19,6 @@ import { LobbyChatSendDto, MatchChatHistoryDto, MatchChatSendDto } from '../chat
 import { LudoRuntimeCommand } from '../games/ludo/runtime';
 import { LobbyCommandDto, LobbyJoinDto } from '../lobby/dto/lobby.dto';
 import { LobbyService } from '../lobby/lobby.service';
-import { JoinMatchmakingDto } from '../matchmaking/dto/join-matchmaking.dto';
-import { ListMatchmakingDto } from '../matchmaking/dto/list-matchmaking.dto';
-import { MatchmakingService } from '../matchmaking/matchmaking.service';
 import { MatchJoinDto, LudoCommandDto, LudoMoveCommandDto } from './dto/ludo-command.dto';
 import { LudoRuntimeService } from './ludo-runtime.service';
 import { PresenceService } from './presence.service';
@@ -48,7 +45,6 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     private readonly auth: RealtimeAuthService,
     private readonly presence: PresenceService,
     private readonly ludoRuntime: LudoRuntimeService,
-    private readonly matchmaking: MatchmakingService,
     private readonly lobby: LobbyService,
     private readonly challenge: ChallengeService,
     private readonly chat: ChatService,
@@ -322,100 +318,6 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     return this.executeLudo(socket, dto, { type: 'RESIGN' });
   }
 
-  @SubscribeMessage('matchmaking:join')
-  async joinMatchmaking(
-    @ConnectedSocket() socket: AuthenticatedSocket,
-    @MessageBody() dto: JoinMatchmakingDto,
-  ): Promise<any> {
-    try {
-      const user = this.requireUser(socket);
-      const result = await this.matchmaking.join(user.id, dto);
-      if (result.status === 'MATCHED') {
-        for (const matchedUserId of result.userIds) {
-          this.publisher.publishUser(
-            matchedUserId,
-            'matchmaking:matched',
-            { match: result.match, gameModeId: result.gameModeId },
-            result.match.id,
-          );
-        }
-      }
-
-      const lobbyModeId = result.status === 'MATCHED' ? result.gameModeId : dto.gameModeId;
-      await this.broadcastLobbyUpdate(lobbyModeId);
-      return { ok: true, ...result };
-    } catch (error) {
-      return this.errorAck(error);
-    }
-  }
-
-  @SubscribeMessage('matchmaking:list')
-  async listMatchmaking(
-    @ConnectedSocket() socket: AuthenticatedSocket,
-    @MessageBody() dto: ListMatchmakingDto,
-  ): Promise<any> {
-    try {
-      const user = this.requireUser(socket);
-      const result = await this.matchmaking.list(dto.gameModeId, user.id);
-      return { ok: true, gameModeId: dto.gameModeId, ...result };
-    } catch (error) {
-      return this.errorAck(error);
-    }
-  }
-
-  @SubscribeMessage('matchmaking:subscribe')
-  async subscribeMatchmakingLobby(
-    @ConnectedSocket() socket: AuthenticatedSocket,
-    @MessageBody() dto: ListMatchmakingDto,
-  ): Promise<any> {
-    try {
-      const user = this.requireUser(socket);
-      await socket.join(this.publisher.lobbyRoom(dto.gameModeId));
-      const payload = await this.matchmaking.buildLobbyPayload(dto.gameModeId, user.id);
-      return { ok: true, ...payload };
-    } catch (error) {
-      return this.errorAck(error);
-    }
-  }
-
-  @SubscribeMessage('matchmaking:unsubscribe')
-  async unsubscribeMatchmakingLobby(
-    @ConnectedSocket() socket: AuthenticatedSocket,
-    @MessageBody() dto: ListMatchmakingDto,
-  ): Promise<any> {
-    try {
-      await socket.leave(this.publisher.lobbyRoom(dto.gameModeId));
-      return { ok: true };
-    } catch (error) {
-      return this.errorAck(error);
-    }
-  }
-
-  @SubscribeMessage('matchmaking:cancel')
-  async cancelMatchmaking(@ConnectedSocket() socket: AuthenticatedSocket): Promise<any> {
-    try {
-      const user = this.requireUser(socket);
-      const status = await this.matchmaking.status(user.id);
-      const result = await this.matchmaking.cancel(user.id);
-      if (status.status === 'QUEUED' && status.gameModeId) {
-        await this.broadcastLobbyUpdate(status.gameModeId);
-      }
-      return { ok: true, ...result };
-    } catch (error) {
-      return this.errorAck(error);
-    }
-  }
-
-  @SubscribeMessage('matchmaking:status')
-  async matchmakingStatus(@ConnectedSocket() socket: AuthenticatedSocket): Promise<any> {
-    try {
-      const user = this.requireUser(socket);
-      return { ok: true, ...(await this.matchmaking.status(user.id)) };
-    } catch (error) {
-      return this.errorAck(error);
-    }
-  }
-
   private async executeLudo(
     socket: AuthenticatedSocket,
     dto: LudoCommandDto,
@@ -463,17 +365,6 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       ...(version !== undefined ? { version } : {}),
       data,
     };
-  }
-
-  private async broadcastLobbyUpdate(gameModeId: string): Promise<void> {
-    const room = this.publisher.lobbyRoom(gameModeId);
-    const sockets = await this.server.in(room).fetchSockets();
-    for (const remoteSocket of sockets) {
-      const socket = remoteSocket as unknown as AuthenticatedSocket;
-      const userId = socket.data?.user?.id;
-      const payload = await this.matchmaking.buildLobbyPayload(gameModeId, userId);
-      remoteSocket.emit('matchmaking:lobby_updated', this.envelope(payload));
-    }
   }
 
   private async handleLobbyDisconnect(userId: string): Promise<void> {

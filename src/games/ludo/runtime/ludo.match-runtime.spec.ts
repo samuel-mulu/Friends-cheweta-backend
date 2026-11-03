@@ -1,10 +1,5 @@
 import { FixedDiceProvider } from '../dice';
-import {
-  LudoMatchPhase,
-  LudoTokenState,
-  LudoTurnPhase,
-  createInitialLudoState,
-} from '../domain';
+import { LudoMatchPhase, LudoTokenState, LudoTurnPhase, createInitialLudoState } from '../domain';
 import { LudoMatchRuntime, LudoRuntimeEventType } from './index';
 
 function finishStartingRoll(runtime: LudoMatchRuntime, first = 'p1', second = 'p2'): void {
@@ -58,7 +53,7 @@ describe('LudoMatchRuntime', () => {
     expect(runtime.getState().game.currentPlayerId).toBe('p2');
   });
 
-  it('returns the same result for an identical commandId retry', () => {
+  it('treats a retried command as stale (persistence layer owns idempotency)', () => {
     const runtime = new LudoMatchRuntime('m1', ['p1', 'p2'], new FixedDiceProvider([4, 2]));
     const command = {
       type: 'ROLL_FOR_START' as const,
@@ -66,17 +61,20 @@ describe('LudoMatchRuntime', () => {
       playerId: 'p1',
       expectedVersion: 0,
     };
-    const first = runtime.execute(command);
-    const second = runtime.execute(command);
-    expect(second).toEqual(first);
-    expect(runtime.getState().game.version).toBe(1);
+    runtime.execute(command);
+    expect(() => runtime.execute(command)).toThrow('MATCH_VERSION_CONFLICT');
   });
 
   it('rejects stale expectedVersion', () => {
     const runtime = new LudoMatchRuntime('m1', ['p1', 'p2'], new FixedDiceProvider([4]));
     runtime.execute({ type: 'ROLL_FOR_START', commandId: 'a', playerId: 'p1', expectedVersion: 0 });
     expect(() =>
-      runtime.execute({ type: 'ROLL_FOR_START', commandId: 'b', playerId: 'p2', expectedVersion: 0 }),
+      runtime.execute({
+        type: 'ROLL_FOR_START',
+        commandId: 'b',
+        playerId: 'p2',
+        expectedVersion: 0,
+      }),
     ).toThrow('MATCH_VERSION_CONFLICT');
   });
 
@@ -89,7 +87,9 @@ describe('LudoMatchRuntime', () => {
       playerId: 'p1',
       expectedVersion: runtime.getState().game.version,
     });
-    expect(result.events.some((event) => event.type === LudoRuntimeEventType.NO_LEGAL_MOVE)).toBe(true);
+    expect(result.events.some((event) => event.type === LudoRuntimeEventType.NO_LEGAL_MOVE)).toBe(
+      true,
+    );
     expect(runtime.getState().game.currentPlayerId).toBe('p2');
     expect(runtime.getState().game.turnPhase).toBe(LudoTurnPhase.WAITING_FOR_ROLL);
   });
@@ -103,22 +103,41 @@ describe('LudoMatchRuntime', () => {
     finishStartingRoll(runtime);
 
     runtime.execute({
-      type: 'ROLL_DICE', commandId: 'g1', playerId: 'p1', expectedVersion: runtime.getState().game.version,
+      type: 'ROLL_DICE',
+      commandId: 'g1',
+      playerId: 'p1',
+      expectedVersion: runtime.getState().game.version,
     });
     runtime.execute({
-      type: 'MOVE_TOKEN', commandId: 'g2', playerId: 'p1', tokenId: 'RED-1', expectedVersion: runtime.getState().game.version,
+      type: 'MOVE_TOKEN',
+      commandId: 'g2',
+      playerId: 'p1',
+      tokenId: 'RED-1',
+      expectedVersion: runtime.getState().game.version,
     });
     runtime.execute({
-      type: 'ROLL_DICE', commandId: 'g3', playerId: 'p1', expectedVersion: runtime.getState().game.version,
+      type: 'ROLL_DICE',
+      commandId: 'g3',
+      playerId: 'p1',
+      expectedVersion: runtime.getState().game.version,
     });
     runtime.execute({
-      type: 'MOVE_TOKEN', commandId: 'g4', playerId: 'p1', tokenId: 'RED-1', expectedVersion: runtime.getState().game.version,
+      type: 'MOVE_TOKEN',
+      commandId: 'g4',
+      playerId: 'p1',
+      tokenId: 'RED-1',
+      expectedVersion: runtime.getState().game.version,
     });
     const third = runtime.execute({
-      type: 'ROLL_DICE', commandId: 'g5', playerId: 'p1', expectedVersion: runtime.getState().game.version,
+      type: 'ROLL_DICE',
+      commandId: 'g5',
+      playerId: 'p1',
+      expectedVersion: runtime.getState().game.version,
     });
 
-    expect(third.events.some((event) => event.type === LudoRuntimeEventType.THIRD_SIX_FORFEITED)).toBe(true);
+    expect(
+      third.events.some((event) => event.type === LudoRuntimeEventType.THIRD_SIX_FORFEITED),
+    ).toBe(true);
     expect(runtime.getState().game.currentPlayerId).toBe('p2');
     expect(runtime.getState().game.consecutiveSixes).toBe(0);
   });
@@ -143,8 +162,16 @@ describe('LudoMatchRuntime', () => {
     );
 
     runtime.execute({ type: 'ROLL_DICE', commandId: 'roll', playerId: 'p1', expectedVersion: 0 });
-    const result = runtime.execute({ type: 'MOVE_TOKEN', commandId: 'move', playerId: 'p1', tokenId: 'RED-1', expectedVersion: 1 });
-    expect(result.events.some((event) => event.type === LudoRuntimeEventType.MATCH_FINISHED)).toBe(true);
+    const result = runtime.execute({
+      type: 'MOVE_TOKEN',
+      commandId: 'move',
+      playerId: 'p1',
+      tokenId: 'RED-1',
+      expectedVersion: 1,
+    });
+    expect(result.events.some((event) => event.type === LudoRuntimeEventType.MATCH_FINISHED)).toBe(
+      true,
+    );
     expect(runtime.getState().game.phase).toBe(LudoMatchPhase.FINISHED);
     expect(runtime.getState().game.winnerOrder).toEqual(['p1', 'p2']);
   });

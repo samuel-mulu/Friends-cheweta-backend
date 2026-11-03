@@ -19,7 +19,6 @@ const envSchema = z.object({
   REDIS_RUNTIME_TTL_SECONDS: z.coerce.number().int().positive().default(86400),
   REDIS_COMMAND_TTL_SECONDS: z.coerce.number().int().positive().default(86400),
   REDIS_PRESENCE_TTL_SECONDS: z.coerce.number().int().positive().default(90),
-  REDIS_MATCHMAKING_TTL_SECONDS: z.coerce.number().int().positive().default(600),
   REDIS_LOCK_TTL_MS: z.coerce.number().int().min(1000).max(30000).default(5000),
 
   LUDO_MAX_CONSECUTIVE_TIMEOUTS: z.coerce.number().int().min(1).max(10).default(3),

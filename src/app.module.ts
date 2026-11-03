@@ -17,7 +17,6 @@ import { LobbyModule } from './lobby/lobby.module';
 import { MatchCreationModule } from './match-creation/match-creation.module';
 import { SettlementModule } from './settlement/settlement.module';
 import { PaymentsModule } from './payments/payments.module';
-import { MatchmakingModule } from './matchmaking/matchmaking.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { RedisModule } from './redis/redis.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -45,7 +44,6 @@ import { WalletModule } from './wallet/wallet.module';
     ChatModule,
     GameEntryModule,
     SettlementModule,
-    MatchmakingModule,
     RealtimeModule,
     AdminModule,
   ],
