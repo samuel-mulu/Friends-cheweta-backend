@@ -1,3 +1,5 @@
+import type { LudoRulesVersion } from './ludo.rules';
+
 export enum LudoColor {
   RED = 'RED',
   GREEN = 'GREEN',
@@ -41,7 +43,7 @@ export type LudoPlayerState = {
 };
 
 export type LudoGameState = {
-  rulesVersion: 'LUDO_CLASSIC_V1';
+  rulesVersion: LudoRulesVersion;
   matchId: string;
   version: number;
   phase: LudoMatchPhase;

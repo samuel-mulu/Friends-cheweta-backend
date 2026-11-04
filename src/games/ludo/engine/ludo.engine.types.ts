@@ -25,3 +25,11 @@ export type LudoMoveResolution = {
   tokenAfter: LudoToken;
   capturedTokenIds: string[];
 };
+
+/** What the player sees before choosing: where each legal token would land. */
+export type LudoMovePreview = {
+  tokenId: string;
+  toProgress: number;
+  captures: string[];
+  safe: boolean;
+};

@@ -332,7 +332,8 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       const timing = await this.timeouts.onMatchJoined(dto.matchId, user.id, state);
       const participants = await this.ludoRuntime.getParticipantViews(dto.matchId, state);
       const recentMessages = await this.chat.getMatchHistory(dto.matchId).catch(() => []);
-      return { ok: true, state, timing, version: state.game.version, participants, recentMessages };
+      const legalMoves = this.ludoRuntime.previewMoves(state);
+      return { ok: true, state, timing, version: state.game.version, participants, recentMessages, legalMoves };
     } catch (error) {
       return this.errorAck(error);
     }
@@ -422,7 +423,8 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       const state = await this.ludoRuntime.getSnapshot(dto.matchId, user.id);
       const timing = await this.timeouts.getTiming(dto.matchId, state);
       const participants = await this.ludoRuntime.getParticipantViews(dto.matchId, state);
-      return { ok: true, state, timing, version: state.game.version, participants };
+      const legalMoves = this.ludoRuntime.previewMoves(state);
+      return { ok: true, state, timing, version: state.game.version, participants, legalMoves };
     } catch (error) {
       return this.errorAck(error);
     }

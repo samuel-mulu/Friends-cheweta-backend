@@ -1,5 +1,5 @@
 import { DiceProvider, FixedDiceProvider, SeededDiceProvider } from '../dice';
-import { LudoGameState, LudoMatchPhase, LudoTurnPhase, assertValidLudoState } from '../domain';
+import { LudoGameState, LudoMatchPhase, LudoTurnPhase, assertValidLudoState, LudoRulesVersion } from '../domain';
 import { LudoEngine } from '../engine';
 import { LudoMatchRuntime, LudoRuntimeCommand, LudoRuntimeEventType } from '../runtime';
 import { LudoBot } from './bots';
@@ -12,6 +12,7 @@ export type ReplayAction =
 
 export type LudoSimulationResult = {
   matchId: string;
+  rulesVersion: LudoRulesVersion;
   playerIds: string[];
   winnerOrder: string[];
   finalState: LudoGameState;
@@ -51,11 +52,13 @@ export function simulateLudoMatch(options: {
   dice?: DiceProvider;
   seed?: string;
   maxCommands?: number;
+  rulesVersion?: LudoRulesVersion;
 }): LudoSimulationResult {
+  const rulesVersion = options.rulesVersion ?? 'LUDO_CLASSIC_V1';
   const recordingDice = new RecordingDiceProvider(
     options.dice ?? new SeededDiceProvider(options.seed ?? options.matchId),
   );
-  const runtime = new LudoMatchRuntime(options.matchId, options.playerIds, recordingDice);
+  const runtime = new LudoMatchRuntime(options.matchId, options.playerIds, recordingDice, undefined, rulesVersion);
   const engine = new LudoEngine();
   const transcript: ReplayAction[] = [];
   const maxCommands = options.maxCommands ?? 20_000;
@@ -124,6 +127,7 @@ export function simulateLudoMatch(options: {
 
   return {
     matchId: options.matchId,
+    rulesVersion,
     playerIds: [...options.playerIds],
     winnerOrder: [...final.winnerOrder],
     finalState: final,
@@ -139,6 +143,8 @@ export function replayLudoSimulation(result: LudoSimulationResult): void {
     result.matchId,
     result.playerIds,
     new FixedDiceProvider(result.diceRolls),
+    undefined,
+    result.rulesVersion,
   );
 
   for (const action of result.transcript) {

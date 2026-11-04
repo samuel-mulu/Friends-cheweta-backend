@@ -1,5 +1,5 @@
 import { LudoGameState } from '../domain';
-import { LudoMoveResolution } from '../engine';
+import { LudoMoveResolution, LudoMovePreview } from '../engine';
 
 export enum LudoRuntimeEventType {
   STARTING_ROLL = 'STARTING_ROLL',
@@ -43,6 +43,8 @@ export type LudoRuntimeEvent = {
   round?: number;
   candidatePlayerIds?: string[];
   move?: LudoMoveResolution;
+  /** LEGAL_MOVES_READY: where each legal token would land. */
+  legalMoves?: LudoMovePreview[];
 };
 
 export type LudoRuntimeCommandBase = {

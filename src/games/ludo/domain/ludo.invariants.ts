@@ -7,11 +7,11 @@ import {
   isSafeGlobalSquare,
   toGlobalTrackIndex,
 } from './ludo.board';
-import { LUDO_CLASSIC_V1 } from './ludo.rules';
+import { LUDO_CLASSIC_V1, isLudoRulesVersion } from './ludo.rules';
 import { LudoGameState, LudoTokenState } from './ludo.types';
 
 export function assertValidLudoState(state: LudoGameState): void {
-  if (state.rulesVersion !== LUDO_CLASSIC_V1.version) throw new Error('Unsupported Ludo rules version.');
+  if (!isLudoRulesVersion(state.rulesVersion)) throw new Error('Unsupported Ludo rules version.');
   if (!Number.isInteger(state.version) || state.version < 0) throw new Error('State version must be non-negative.');
   if (state.players.length < 2 || state.players.length > 4) throw new Error('Invalid player count.');
 

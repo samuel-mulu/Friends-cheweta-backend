@@ -1,5 +1,5 @@
-import { LudoGameState } from '../domain';
-import { LudoLegalMove, LudoMoveResolution } from './ludo.engine.types';
+import { LudoGameState, isSafeGlobalSquare } from '../domain';
+import { LudoLegalMove, LudoMovePreview, LudoMoveResolution } from './ludo.engine.types';
 import { getLegalMoves, getLegalTokenIds } from './ludo.legal-moves';
 import { applyLudoMove } from './ludo.move-resolver';
 
@@ -10,6 +10,16 @@ import { applyLudoMove } from './ludo.move-resolver';
 export class LudoEngine {
   getLegalMoves(state: LudoGameState, playerId: string, diceValue: number): LudoLegalMove[] {
     return getLegalMoves(state, playerId, diceValue);
+  }
+
+  /** Landing preview for the legal moves (derived; nothing is stored). */
+  previewMoves(state: LudoGameState, playerId: string, diceValue: number): LudoMovePreview[] {
+    return getLegalMoves(state, playerId, diceValue).map((move) => ({
+      tokenId: move.tokenId,
+      toProgress: move.toProgress,
+      captures: [...move.capturedTokenIds],
+      safe: move.destinationGlobalSquare !== null && isSafeGlobalSquare(move.destinationGlobalSquare),
+    }));
   }
 
   getLegalTokenIds(state: LudoGameState, playerId: string, diceValue: number): string[] {

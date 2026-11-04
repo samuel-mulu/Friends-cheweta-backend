@@ -7,7 +7,8 @@ import {
 } from '@nestjs/common';
 import { GameEntryService } from '../game-entry/game-entry.service';
 import { CryptoDiceProvider } from '../games/ludo/dice';
-import { LudoMatchPhase } from '../games/ludo/domain';
+import { LudoMatchPhase, LudoTurnPhase, isLudoRulesVersion } from '../games/ludo/domain';
+import { LudoEngine, LudoMovePreview } from '../games/ludo/engine';
 import { LudoMatchRuntime, LudoMatchRuntimeState, LudoRuntimeCommand } from '../games/ludo/runtime';
 import { MatchStatus } from '../generated/prisma/enums';
 import { MatchHistoryService } from '../match-history/match-history.service';
@@ -56,6 +57,13 @@ export class LudoRuntimeService {
       color:
         state.game.players.find((player) => player.userId === participant.userId)?.color ?? null,
     }));
+  }
+
+  /** Landing preview for whoever must move now (derived from state, so never stale). */
+  previewMoves(state: LudoMatchRuntimeState): LudoMovePreview[] {
+    const game = state.game;
+    if (game.turnPhase !== LudoTurnPhase.WAITING_FOR_MOVE || !game.currentPlayerId || game.diceValue === null) return [];
+    return new LudoEngine().previewMoves(game, game.currentPlayerId, game.diceValue);
   }
 
   getStoredSnapshot(matchId: string): Promise<LudoMatchRuntimeState | null> {
@@ -200,7 +208,7 @@ export class LudoRuntimeService {
       return this.repository.saveSnapshotIfAbsent(matchId, durable);
     }
 
-    if (match.rulesVersion !== 'LUDO_CLASSIC_V1') {
+    if (!isLudoRulesVersion(match.rulesVersion)) {
       throw new ServiceUnavailableException({
         code: 'UNSUPPORTED_LUDO_RULES_VERSION',
         message: `Unsupported rules version: ${match.rulesVersion}`,
@@ -213,6 +221,8 @@ export class LudoRuntimeService {
       match.id,
       match.participants.map((participant) => participant.userId),
       new CryptoDiceProvider(),
+      undefined,
+      match.rulesVersion,
     ).getState();
     // Two players joining at once both reach here; exactly one snapshot wins.
     const state = await this.repository.saveSnapshotIfAbsent(matchId, initial);

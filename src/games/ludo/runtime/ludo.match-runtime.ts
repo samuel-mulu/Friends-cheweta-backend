@@ -2,6 +2,8 @@ import { DiceProvider } from '../dice';
 import {
   LUDO_CLASSIC_V1,
   LudoGameState,
+  LudoRulesVersion,
+  rulesFor,
   LudoMatchPhase,
   LudoTokenState,
   LudoTurnPhase,
@@ -86,8 +88,9 @@ export class LudoMatchRuntime {
     playerIds: string[],
     private readonly dice: DiceProvider,
     private readonly engine = new LudoEngine(),
+    rulesVersion: LudoRulesVersion = LUDO_CLASSIC_V1.version,
   ) {
-    const game = createInitialLudoState(matchId, playerIds);
+    const game = createInitialLudoState(matchId, playerIds, rulesVersion);
     this.state = {
       game,
       startingRoll: {
@@ -113,6 +116,11 @@ export class LudoMatchRuntime {
     runtime.state = cloneRuntimeState(state);
     runtime.assertRuntimeState();
     return runtime;
+  }
+
+  /** Rules this match was created with (stored in its state). */
+  private get rules() {
+    return rulesFor(this.state.game.rulesVersion);
   }
 
   getState(): LudoMatchRuntimeState {
@@ -232,7 +240,7 @@ export class LudoMatchRuntime {
 
     if (value === 6) {
       const nextSixCount = game.consecutiveSixes + 1;
-      if (nextSixCount >= LUDO_CLASSIC_V1.maxConsecutiveSixes) {
+      if (nextSixCount >= this.rules.maxConsecutiveSixes) {
         game.consecutiveSixes = 0;
         events.push(
           this.event(LudoRuntimeEventType.THIRD_SIX_FORFEITED, {
@@ -259,7 +267,7 @@ export class LudoMatchRuntime {
         }),
       );
 
-      if (value === 6 && LUDO_CLASSIC_V1.sixGrantsExtraRoll) {
+      if (value === 6 && this.rules.sixGrantsExtraRoll) {
         game.turnPhase = LudoTurnPhase.WAITING_FOR_ROLL;
         game.diceValue = null;
         events.push(
@@ -272,10 +280,27 @@ export class LudoMatchRuntime {
     }
 
     game.turnPhase = LudoTurnPhase.WAITING_FOR_MOVE;
+
+    // Only one possible move: play it now (popular rules) instead of making
+    // the player tap. Same command, so it is atomic and versions stay ordered.
+    if (legalTokenIds.length === 1 && this.rules.autoMoveSingleLegal) {
+      return [
+        ...events,
+        ...this.moveToken({
+          type: 'MOVE_TOKEN',
+          commandId: command.commandId,
+          playerId: command.playerId,
+          expectedVersion: game.version,
+          tokenId: legalTokenIds[0],
+        }),
+      ];
+    }
+
     events.push(
       this.event(LudoRuntimeEventType.LEGAL_MOVES_READY, {
         playerId: command.playerId,
         tokenIds: [...legalTokenIds],
+        legalMoves: this.engine.previewMoves(game, command.playerId, value),
       }),
     );
     return events;
@@ -330,11 +355,12 @@ export class LudoMatchRuntime {
 
     if (this.tryFinishMatch(events)) return events;
 
-    const mayRollAgain =
-      diceValue === 6 &&
-      LUDO_CLASSIC_V1.sixGrantsExtraRoll &&
-      !nowFinished &&
-      !this.state.resignedPlayerIds.includes(command.playerId);
+    const rules = this.rules;
+    const earnedExtraRoll =
+      (diceValue === 6 && rules.sixGrantsExtraRoll) ||
+      (result.resolution.capturedTokenIds.length > 0 && rules.captureGrantsExtraRoll) ||
+      (result.resolution.tokenAfter.state === LudoTokenState.FINISHED && rules.finishGrantsExtraRoll);
+    const mayRollAgain = earnedExtraRoll && !nowFinished && !this.state.resignedPlayerIds.includes(command.playerId);
 
     if (mayRollAgain) {
       next.turnPhase = LudoTurnPhase.WAITING_FOR_ROLL;

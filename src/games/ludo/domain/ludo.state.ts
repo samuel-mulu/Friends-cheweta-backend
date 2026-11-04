@@ -1,5 +1,5 @@
 import { LUDO_BASE_PROGRESS } from './ludo.board';
-import { LUDO_CLASSIC_V1 } from './ludo.rules';
+import { LUDO_CLASSIC_V1, LudoRulesVersion } from './ludo.rules';
 import {
   LudoColor,
   LudoGameState,
@@ -16,7 +16,11 @@ function colorsForPlayerCount(count: number): LudoColor[] {
   throw new RangeError('Ludo requires 2 to 4 players.');
 }
 
-export function createInitialLudoState(matchId: string, userIds: string[]): LudoGameState {
+export function createInitialLudoState(
+  matchId: string,
+  userIds: string[],
+  rulesVersion: LudoRulesVersion = LUDO_CLASSIC_V1.version,
+): LudoGameState {
   if (!matchId.trim()) throw new Error('matchId is required.');
   if (new Set(userIds).size !== userIds.length) throw new Error('Ludo players must be unique.');
   if (userIds.length < LUDO_CLASSIC_V1.minPlayers || userIds.length > LUDO_CLASSIC_V1.maxPlayers) {
@@ -40,7 +44,7 @@ export function createInitialLudoState(matchId: string, userIds: string[]): Ludo
   });
 
   return {
-    rulesVersion: LUDO_CLASSIC_V1.version,
+    rulesVersion,
     matchId,
     version: 0,
     phase: LudoMatchPhase.PRE_GAME,

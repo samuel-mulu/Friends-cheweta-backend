@@ -29,6 +29,8 @@ for (let index = 0; index < count; index += 1) {
     bots,
     seed: `fuzz-dice-${playerCount}-${index}`,
     maxCommands: 50_000,
+    // Alternate rule sets so both stay fuzzed.
+    rulesVersion: index % 2 === 0 ? 'LUDO_CLASSIC_V1' : 'LUDO_CLASSIC_V2',
   });
 
   if (result.winnerOrder.length !== playerCount) throw new Error('FUZZ_INCOMPLETE_RANKING');

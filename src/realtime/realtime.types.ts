@@ -1,3 +1,4 @@
+import type { LudoMovePreview } from '../games/ludo/engine';
 import { Socket } from 'socket.io';
 import { UserRole, UserStatus } from '../generated/prisma/enums';
 import { LudoMatchRuntimeState, LudoRuntimeEvent } from '../games/ludo/runtime';
@@ -50,6 +51,8 @@ export type SnapshotAck =
       version: number;
       participants: LudoMatchParticipantView[];
       recentMessages?: unknown[];
+      /** Where each legal token would land (when the current player must move). */
+      legalMoves?: LudoMovePreview[];
     }
   | { ok: false; code: string; message: string };
 

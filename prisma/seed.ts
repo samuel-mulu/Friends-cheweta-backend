@@ -101,7 +101,7 @@ async function main(): Promise<void> {
           stakeAmountMinor: mode.stakeAmountMinor,
           platformFeeBps: 0,
           turnDurationSeconds: 30,
-          rulesVersion: 'LUDO_CLASSIC_V1',
+          rulesVersion: 'LUDO_CLASSIC_V2',
           enabled: true,
         },
         create: {
@@ -112,7 +112,7 @@ async function main(): Promise<void> {
           stakeAmountMinor: mode.stakeAmountMinor,
           platformFeeBps: 0,
           turnDurationSeconds: 30,
-          rulesVersion: 'LUDO_CLASSIC_V1',
+          rulesVersion: 'LUDO_CLASSIC_V2',
           enabled: true,
         },
       });

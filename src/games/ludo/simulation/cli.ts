@@ -1,4 +1,5 @@
 import { AggressiveBot, DefensiveBot, FastBot, LudoBot, MixedBot, RandomBot } from './bots';
+import { isLudoRulesVersion } from '../domain';
 import { replayLudoSimulation, simulateLudoMatch } from './ludo.simulator';
 
 type BotFactory = (seed: number) => LudoBot;
@@ -13,8 +14,11 @@ const factories: Array<{ name: string; make: BotFactory }> = [
 
 const count = Number.parseInt(process.argv[2] ?? '5000', 10);
 if (!Number.isInteger(count) || count <= 0) throw new Error('Game count must be a positive integer.');
+const rulesVersion = process.argv[3] ?? 'LUDO_CLASSIC_V1';
+if (!isLudoRulesVersion(rulesVersion)) throw new Error(`Unknown rules version ${rulesVersion}`);
 
 const wins: Record<string, number> = {};
+const played: Record<string, number> = {};
 let totalCommands = 0;
 let replayed = 0;
 
@@ -31,7 +35,10 @@ for (let index = 0; index < count; index += 1) {
       [p2]: right.make(index + 100_001),
     },
     seed: `bulk-dice-${index}`,
+    rulesVersion,
   });
+  played[left.name] = (played[left.name] ?? 0) + 1;
+  played[right.name] = (played[right.name] ?? 0) + 1;
 
   const winnerStrategy = result.winnerOrder[0].split('-').slice(1).join('-');
   wins[winnerStrategy] = (wins[winnerStrategy] ?? 0) + 1;
@@ -48,6 +55,11 @@ for (let index = 0; index < count; index += 1) {
 console.log(JSON.stringify({
   games: count,
   replayed,
+  rulesVersion,
   averageCommands: Math.round(totalCommands / count),
   wins,
+  // Fair comparison: share of the games each strategy played that it won.
+  winRate: Object.fromEntries(
+    Object.keys(played).map((name) => [name, Number(((wins[name] ?? 0) / played[name]).toFixed(3))]),
+  ),
 }, null, 2));

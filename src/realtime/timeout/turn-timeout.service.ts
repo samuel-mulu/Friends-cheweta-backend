@@ -303,6 +303,14 @@ export class TurnTimeoutService {
 
     const result = await this.runtime.execute(command);
     this.publisher.publishExecution(result);
+    // Tell everyone the server played for an absent player, with strike count,
+    // so the forfeit after max strikes is never a surprise.
+    this.publisher.publishRoom(
+      this.publisher.matchRoom(matchId),
+      'ludo:auto_played',
+      { playerId, strikes: counts[playerId], maxStrikes: this.maxConsecutiveTimeouts, action: command.type },
+      matchId,
+    );
     await this.scheduleForState(result.state, counts);
   }
 
