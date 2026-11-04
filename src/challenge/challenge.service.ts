@@ -1,7 +1,9 @@
 import {
   ConflictException,
   ForbiddenException,
+  HttpException,
   Injectable,
+  ServiceUnavailableException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -328,7 +330,16 @@ export class ChallengeService {
         this.logger.warn(
           `challenge_accept_failed challenge=${challengeId} reason=${error instanceof Error ? error.message : 'unknown'}`,
         );
-        throw new ChallengeAcceptFailedError(error, await this.releaseFailedAccept(challenge));
+        // Business rejections (balance, active match…) keep their code; anything
+        // unexpected (database timeout…) becomes a readable, retryable error.
+        const reason =
+          error instanceof HttpException
+            ? error
+            : new ServiceUnavailableException({
+                code: 'MATCH_CREATION_FAILED',
+                message: 'Could not start the match. Please try again.',
+              });
+        throw new ChallengeAcceptFailedError(reason, await this.releaseFailedAccept(challenge));
       }
       match = committed;
     }

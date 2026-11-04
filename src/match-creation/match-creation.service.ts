@@ -29,6 +29,16 @@ type CreateSecuredMatchInput = {
   rematchOfMatchId?: string;
 };
 
+// Prisma's default interactive-transaction timeout is 5s. Match creation makes
+// ~15 sequential round trips (mode, eligibility, match, two wallet locks), which
+// exceeds 5s when the database is far away (e.g. local dev against Neon).
+// Same ceiling as settlement; normal runs finish far below it.
+const MATCH_CREATION_TRANSACTION_OPTIONS = {
+  isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+  maxWait: 5000,
+  timeout: 15000,
+} as const;
+
 @Injectable()
 export class MatchCreationService {
   private readonly logger = new Logger(MatchCreationService.name);
@@ -53,94 +63,89 @@ export class MatchCreationService {
   private async createSecuredMatchAttempts(input: CreateSecuredMatchInput) {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       try {
-        return await this.prisma.$transaction(
-          async (tx) => {
-            const duplicate = await this.findExisting(input, tx);
-            if (duplicate) return this.serializeMatch(duplicate);
-
-            const mode = await tx.gameMode.findUnique({
-              where: { id: input.gameModeId },
-              include: { game: true },
+        return await this.prisma.$transaction(async (tx) => {
+          // Duplicate creates are stopped by the unique challengeId index
+          // (P2002 below), so no extra lookup is needed inside the transaction.
+          const mode = await tx.gameMode.findUnique({
+            where: { id: input.gameModeId },
+            include: { game: true },
+          });
+          if (!mode || !mode.enabled || !mode.game.enabled) {
+            throw new NotFoundException({
+              code: 'GAME_MODE_NOT_AVAILABLE',
+              message: 'Game mode is not available.',
             });
-            if (!mode || !mode.enabled || !mode.game.enabled) {
-              throw new NotFoundException({
-                code: 'GAME_MODE_NOT_AVAILABLE',
-                message: 'Game mode is not available.',
-              });
-            }
-            if (mode.game.code !== 'LUDO' || mode.playerCount !== 2) {
-              throw new ConflictException({
-                code: 'MATCH_CREATION_MODE_NOT_SUPPORTED',
-                message: 'Only Ludo 1v1 modes are supported.',
-              });
-            }
-            if (new Set(input.playerIds).size !== 2) {
-              throw new ConflictException({
-                code: 'INVALID_MATCH_PARTICIPANTS',
-                message: 'Match requires two unique players.',
-              });
-            }
+          }
+          if (mode.game.code !== 'LUDO' || mode.playerCount !== 2) {
+            throw new ConflictException({
+              code: 'MATCH_CREATION_MODE_NOT_SUPPORTED',
+              message: 'Only Ludo 1v1 modes are supported.',
+            });
+          }
+          if (new Set(input.playerIds).size !== 2) {
+            throw new ConflictException({
+              code: 'INVALID_MATCH_PARTICIPANTS',
+              message: 'Match requires two unique players.',
+            });
+          }
 
-            await this.assertPlayersEligible(tx, input.playerIds, mode.stakeAmountMinor);
-            await this.assertNoActiveMatch(tx, input.playerIds);
+          await this.assertPlayersEligible(tx, input.playerIds, mode.stakeAmountMinor);
+          await this.assertNoActiveMatch(tx, input.playerIds);
 
-            const match = await tx.match.create({
-              data: {
-                gameId: mode.gameId,
-                gameModeId: mode.id,
-                status: MatchStatus.CREATED,
-                rulesVersion: mode.rulesVersion,
-                stakeAmountMinor: mode.stakeAmountMinor,
-                platformFeeBps: mode.platformFeeBps,
-                sessionCode: this.sessionCode(),
-                challengeId: input.challengeId,
-                matchmakingKey: input.matchmakingKey,
-                source: input.source,
-                rematchOfMatchId: input.rematchOfMatchId,
-                participants: {
-                  create: input.playerIds.map((userId, seat) => ({ userId, seat })),
-                },
+          // One statement creates the match READY with participants and entry
+          // rows; the wallet locks below join the same transaction, so any
+          // failure rolls everything back.
+          const match = await tx.match.create({
+            data: {
+              gameId: mode.gameId,
+              gameModeId: mode.id,
+              status: MatchStatus.READY,
+              entrySecuredAt: new Date(),
+              rulesVersion: mode.rulesVersion,
+              stakeAmountMinor: mode.stakeAmountMinor,
+              platformFeeBps: mode.platformFeeBps,
+              sessionCode: this.sessionCode(),
+              challengeId: input.challengeId,
+              matchmakingKey: input.matchmakingKey,
+              source: input.source,
+              rematchOfMatchId: input.rematchOfMatchId,
+              participants: {
+                create: input.playerIds.map((userId, seat) => ({ userId, seat })),
               },
-            });
-
-            for (const userId of input.playerIds) {
-              if (mode.stakeAmountMinor > 0n) {
-                await this.wallet.lockFundsInTransaction(tx, {
-                  userId,
-                  amountMinor: mode.stakeAmountMinor,
-                  type: WalletTransactionType.GAME_ENTRY_LOCK,
-                  idempotencyKey: `game-entry:${match.id}:${userId}`,
-                  referenceType: 'MATCH',
-                  referenceId: match.id,
-                  metadata: {
-                    gameModeId: mode.id,
-                    source: input.source,
-                    challengeId: input.challengeId,
-                  },
-                });
-              }
-              await tx.matchEntry.create({
-                data: {
-                  matchId: match.id,
+              entries: {
+                create: input.playerIds.map((userId) => ({
                   userId,
                   amountMinor: mode.stakeAmountMinor,
                   status: MatchEntryStatus.LOCKED,
+                })),
+              },
+            },
+            include: this.matchInclude(),
+          });
+
+          if (mode.stakeAmountMinor > 0n) {
+            for (const userId of input.playerIds) {
+              await this.wallet.lockFundsInTransaction(tx, {
+                userId,
+                amountMinor: mode.stakeAmountMinor,
+                type: WalletTransactionType.GAME_ENTRY_LOCK,
+                idempotencyKey: `game-entry:${match.id}:${userId}`,
+                referenceType: 'MATCH',
+                referenceId: match.id,
+                metadata: {
+                  gameModeId: mode.id,
+                  source: input.source,
+                  challengeId: input.challengeId,
                 },
               });
             }
-
-            const ready = await tx.match.update({
-              where: { id: match.id },
-              data: { status: MatchStatus.READY, entrySecuredAt: new Date() },
-              include: this.matchInclude(),
-            });
-            this.logger.log(
-              `match_creation_success source=${input.source} match=${ready.id} session=${ready.sessionCode} challenge=${input.challengeId ?? '-'} mode=${mode.id}`,
-            );
-            return this.serializeMatch(ready);
-          },
-          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-        );
+          }
+          const ready = match;
+          this.logger.log(
+            `match_creation_success source=${input.source} match=${ready.id} session=${ready.sessionCode} challenge=${input.challengeId ?? '-'} mode=${mode.id}`,
+          );
+          return this.serializeMatch(ready);
+        }, MATCH_CREATION_TRANSACTION_OPTIONS);
       } catch (error) {
         // Serializable transactions can abort on benign contention (e.g. a
         // concurrent wallet update); the whole attempt is safe to retry.

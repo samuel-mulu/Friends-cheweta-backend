@@ -61,4 +61,13 @@ describe('MatchCreationService retries', () => {
     await expect(service.createSecuredMatch(input)).rejects.toBeDefined();
     expect(prisma.$transaction).toHaveBeenCalledTimes(5);
   });
+
+  it('gives the transaction more than the 5s Prisma default (remote databases)', async () => {
+    const { service, prisma } = createHarness();
+    prisma.$transaction.mockResolvedValueOnce(created);
+    await service.createSecuredMatch(input);
+    const options = prisma.$transaction.mock.calls[0][1];
+    expect(options.timeout).toBeGreaterThanOrEqual(15000);
+    expect(options.isolationLevel).toBe('Serializable');
+  });
 });
