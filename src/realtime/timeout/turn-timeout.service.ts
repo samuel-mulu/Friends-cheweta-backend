@@ -72,6 +72,15 @@ export class TurnTimeoutService {
   async afterManualExecution(state: LudoMatchRuntimeState, playerId: string): Promise<LudoTimingState> {
     const previous = await this.redis.getJson<LudoTimingState>(this.timingKey(state.game.matchId));
     const counts = { ...(previous?.consecutiveTimeoutsByPlayer ?? {}), [playerId]: 0 };
+    if ((previous?.consecutiveTimeoutsByPlayer?.[playerId] ?? 0) > 0) {
+      // The player is back: clear their away strikes on every client.
+      this.publisher.publishRoom(
+        this.publisher.matchRoom(state.game.matchId),
+        'ludo:strikes',
+        { playerId, strikes: 0, maxStrikes: this.maxConsecutiveTimeouts },
+        state.game.matchId,
+      );
+    }
     return this.scheduleForState(state, counts);
   }
 
