@@ -23,6 +23,9 @@ import {
 import { ChallengeAcceptFailedError } from '../challenge/challenge.types';
 import { ChatService } from '../chat/chat.service';
 import { DirectChatService } from '../chat/direct-chat.service';
+import { BotDriverService } from '../practice/bot-driver.service';
+import { PracticeStartDto } from '../practice/dto/practice.dto';
+import { PracticeService } from '../practice/practice.service';
 import {
   DirectChatPeerDto,
   DirectChatSendDto,
@@ -63,6 +66,8 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     private readonly challenge: ChallengeService,
     private readonly chat: ChatService,
     private readonly directChat: DirectChatService,
+    private readonly practice: PracticeService,
+    private readonly botDriver: BotDriverService,
     private readonly publisher: RealtimePublisherService,
     private readonly timeouts: TurnTimeoutService,
   ) {}
@@ -320,6 +325,17 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
+  /** Free practice against a bot (EASY | NORMAL | HARD). Resumes an unfinished one. */
+  @SubscribeMessage('practice:start')
+  async startPractice(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: PracticeStartDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      return { ok: true, commandId: dto.commandId, data: await this.practice.start(user.id, dto.level, dto.commandId) };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
   @SubscribeMessage('match:join')
   async joinMatch(
     @ConnectedSocket() socket: AuthenticatedSocket,
@@ -333,6 +349,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       const participants = await this.ludoRuntime.getParticipantViews(dto.matchId, state);
       const recentMessages = await this.chat.getMatchHistory(dto.matchId).catch(() => []);
       const legalMoves = this.ludoRuntime.previewMoves(state);
+      void this.botDriver.consider(state); // practice: a bot may need to roll first
       return { ok: true, state, timing, version: state.game.version, participants, recentMessages, legalMoves };
     } catch (error) {
       return this.errorAck(error);

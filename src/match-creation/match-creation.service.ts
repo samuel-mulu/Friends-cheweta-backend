@@ -39,6 +39,14 @@ const MATCH_CREATION_TRANSACTION_OPTIONS = {
   timeout: 15000,
 } as const;
 
+/** Human-readable match code, e.g. LD-7KQ2MX (unique index on Match.sessionCode). */
+export function generateSessionCode(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = 'LD-';
+  for (let i = 0; i < 6; i += 1) code += alphabet[randomInt(alphabet.length)];
+  return code;
+}
+
 @Injectable()
 export class MatchCreationService {
   private readonly logger = new Logger(MatchCreationService.name);
@@ -259,10 +267,7 @@ export class MatchCreationService {
   }
 
   private sessionCode(): string {
-    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let code = 'LD-';
-    for (let i = 0; i < 6; i += 1) code += alphabet[randomInt(alphabet.length)];
-    return code;
+    return generateSessionCode();
   }
 
   private matchInclude() {

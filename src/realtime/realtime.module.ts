@@ -5,6 +5,8 @@ import { ChatModule } from '../chat/chat.module';
 import { LobbyModule } from '../lobby/lobby.module';
 import { MatchHistoryModule } from '../match-history/match-history.module';
 import { SettlementModule } from '../settlement/settlement.module';
+import { BotDriverService } from '../practice/bot-driver.service';
+import { PracticeService } from '../practice/practice.service';
 import { LudoRuntimeRepository } from './ludo-runtime.repository';
 import { LudoRuntimeService } from './ludo-runtime.service';
 import { PresenceService } from './presence.service';
@@ -25,6 +27,8 @@ import { TurnTimeoutService } from './timeout/turn-timeout.service';
     LudoRuntimeService,
     TurnTimeoutService,
     RealtimeMaintenanceService,
+    PracticeService,
+    BotDriverService,
   ],
   exports: [LudoRuntimeService, TurnTimeoutService],
 })

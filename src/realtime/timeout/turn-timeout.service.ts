@@ -37,12 +37,14 @@ export class TurnTimeoutService {
   }
 
   async onMatchJoined(matchId: string, userId: string, state: LudoMatchRuntimeState): Promise<LudoTimingState> {
-    const joinedKey = this.joinedPlayersKey(matchId);
-    const tx = this.redis.raw().multi();
-    tx.sAdd(joinedKey, userId);
-    tx.expire(joinedKey, 86400);
-    await tx.exec();
+    await this.markJoined(matchId, userId);
     return this.getTiming(matchId, state);
+  }
+
+  /** Records a participant as present (bots are marked at practice start). */
+  async markJoined(matchId: string, userId: string): Promise<void> {
+    const joinedKey = this.joinedPlayersKey(matchId);
+    await this.redis.raw().multi().sAdd(joinedKey, userId).expire(joinedKey, 86400).exec();
   }
 
   async getTiming(matchId: string, state: LudoMatchRuntimeState): Promise<LudoTimingState> {

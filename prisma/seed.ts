@@ -5,18 +5,15 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client';
 import { UserRole, UserStatus } from '../src/generated/prisma/enums';
 import { normalizeEthiopianPhone } from '../src/common/utils/phone.util';
+import { PRACTICE_BOTS } from '../src/practice/practice.constants';
 
 const ADMIN_ACCOUNTS = [
   { fullName: 'Friends Admin 1', phone: '0911111111', password: '12345678' },
   { fullName: 'Friends Admin 2', phone: '0911111112', password: '12345678' },
 ] as const;
 
-/** Practice opponents (Phase 3). Fixed ids-by-phone so the seed is re-runnable. */
-const BOT_ACCOUNTS = [
-  { fullName: 'Bot Easy', phone: '0900000001' },
-  { fullName: 'Bot Normal', phone: '0900000002' },
-  { fullName: 'Bot Hard', phone: '0900000003' },
-] as const;
+/** Practice opponents, one per level (single definition shared with the app). */
+const BOT_ACCOUNTS = Object.values(PRACTICE_BOTS);
 
 async function main(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL;

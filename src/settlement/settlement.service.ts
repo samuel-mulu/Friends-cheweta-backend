@@ -43,6 +43,9 @@ export class SettlementService {
     }
     const winnerId = winnerOrder[0];
 
+    // Set inside the transaction: true only on the call that actually settles a
+    // non-practice match, so follow-up tasks run exactly once and never for bots.
+    let runFollowUp = false;
     const settlement = await withFinancialTiming(this.logger, 'SETTLEMENT', { matchId }, () =>
       this.prisma.$transaction(async (tx) => {
         const existing = await tx.matchSettlement.findUnique({ where: { matchId } });
@@ -135,6 +138,7 @@ export class SettlementService {
           where: { id: matchId },
           data: { status: MatchStatus.FINISHED, finishedAt: new Date(), winnerOrder },
         });
+        runFollowUp = match.source !== 'PRACTICE';
         return this.serialize(settlement);
       }, SETTLEMENT_TRANSACTION_OPTIONS),
     );
@@ -147,7 +151,7 @@ export class SettlementService {
     // socket ordering is preserved by returning immediately here, while
     // follow-up work runs in the background and can never turn an
     // already-committed settlement into a reported failure.
-    void this.runPostSettlementTasks(matchId, winnerOrder);
+    if (runFollowUp) void this.runPostSettlementTasks(matchId, winnerOrder);
     return settlement;
   }
 

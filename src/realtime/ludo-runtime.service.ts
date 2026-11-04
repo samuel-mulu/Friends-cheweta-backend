@@ -34,6 +34,8 @@ export class LudoRuntimeService {
     private readonly history: MatchHistoryService,
   ) {}
 
+  private readonly executedListeners = new Set<(state: LudoMatchRuntimeState) => void>();
+
   async getSnapshot(matchId: string, userId: string): Promise<LudoMatchRuntimeState> {
     await this.assertParticipant(matchId, userId);
     const state = await this.ensureSnapshot(matchId);
@@ -64,6 +66,15 @@ export class LudoRuntimeService {
     const game = state.game;
     if (game.turnPhase !== LudoTurnPhase.WAITING_FOR_MOVE || !game.currentPlayerId || game.diceValue === null) return [];
     return new LudoEngine().previewMoves(game, game.currentPlayerId, game.diceValue);
+  }
+
+  /**
+   * In-process notification after every committed, non-duplicate command
+   * (player, timeout or bot). Used by the practice bot driver.
+   */
+  onExecuted(listener: (state: LudoMatchRuntimeState) => void): () => void {
+    this.executedListeners.add(listener);
+    return () => this.executedListeners.delete(listener);
   }
 
   getStoredSnapshot(matchId: string): Promise<LudoMatchRuntimeState | null> {
@@ -143,6 +154,13 @@ export class LudoRuntimeService {
           .raw()
           .sAdd(this.repository.postCommitRetryKey(), matchId)
           .catch(() => undefined);
+      }
+      for (const listener of this.executedListeners) {
+        try {
+          listener(execution.state);
+        } catch (error) {
+          this.logger.warn(`executed_listener_failed match=${matchId} reason=${(error as Error).message}`);
+        }
       }
     }
     return execution;
