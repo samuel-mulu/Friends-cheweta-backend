@@ -8,9 +8,20 @@ import { LobbyPlayerView } from '../lobby/lobby.types';
 export type ChallengeStatus =
   'PENDING' | 'ACCEPTING' | 'ACCEPTED' | 'REJECTED' | 'CANCELLED' | 'EXPIRED';
 
+/**
+ * LOBBY: both players READY in the same lobby.
+ * REMATCH: the two players of a finished match; no lobby involved.
+ * INVITE: opponent unknown until someone joins with `inviteCode`.
+ */
+export type ChallengeKind = 'LOBBY' | 'REMATCH' | 'INVITE';
+
 /** Stored in Redis. Fields are strings/numbers only so Lua can re-encode it safely. */
 export type ChallengeRecord = {
   id: string;
+  /** Absent on records written before kinds existed; treat as LOBBY. */
+  kind?: ChallengeKind;
+  sourceMatchId?: string;
+  inviteCode?: string;
   gameModeId: string;
   challengerId: string;
   opponentId: string;

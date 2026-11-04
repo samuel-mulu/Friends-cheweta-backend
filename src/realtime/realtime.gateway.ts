@@ -13,7 +13,13 @@ import {
 import { randomUUID } from 'node:crypto';
 import { Server } from 'socket.io';
 import { ChallengeService } from '../challenge/challenge.service';
-import { ChallengeCommandDto, ChallengeCreateDto } from '../challenge/dto/challenge.dto';
+import {
+  ChallengeCommandDto,
+  ChallengeCreateDto,
+  ChallengeRematchDto,
+  InviteCreateDto,
+  InviteJoinDto,
+} from '../challenge/dto/challenge.dto';
 import { ChallengeAcceptFailedError } from '../challenge/challenge.types';
 import { ChatService } from '../chat/chat.service';
 import { LobbyChatSendDto, MatchChatHistoryDto, MatchChatSendDto } from '../chat/dto/chat.dto';
@@ -212,6 +218,60 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         this.publisher.publishChallengeTransition(error.transition);
         return this.errorAck(error.reason);
       }
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('challenge:rematch')
+  async requestRematch(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: ChallengeRematchDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      const { challenge, duplicate } = await this.challenge.createRematch(user.id, dto.matchId, dto.commandId);
+      if (!duplicate) {
+        this.publisher.publishUser(challenge.challengerId, 'challenge:created', challenge);
+        this.publisher.publishUser(challenge.opponentId, 'challenge:received', challenge);
+      }
+      return { ok: true, commandId: dto.commandId, duplicate, data: challenge };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('challenge:invite_create')
+  async createInvite(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: InviteCreateDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      const { challenge, duplicate } = await this.challenge.createInvite(user.id, dto.gameModeId, dto.commandId);
+      if (!duplicate) this.publisher.publishUser(user.id, 'challenge:created', challenge);
+      return { ok: true, commandId: dto.commandId, duplicate, data: challenge };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('challenge:invite_join')
+  async joinInvite(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: InviteJoinDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      const result = await this.challenge.joinInvite(user.id, dto.code, dto.commandId);
+      if (!result.duplicate) this.publisher.publishChallengeTransition(result);
+      return { ok: true, commandId: dto.commandId, duplicate: result.duplicate, data: result.challenge };
+    } catch (error) {
+      if (error instanceof ChallengeAcceptFailedError) {
+        this.publisher.publishChallengeTransition(error.transition);
+        return this.errorAck(error.reason);
+      }
+      return this.errorAck(error);
+    }
+  }
+
+  /** Recovery after reconnect: the caller's pending challenge (lobby, rematch or invite), if any. */
+  @SubscribeMessage('challenge:active')
+  async activeChallenge(@ConnectedSocket() socket: AuthenticatedSocket): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      return { ok: true, data: await this.challenge.activeForUser(user.id) };
+    } catch (error) {
       return this.errorAck(error);
     }
   }

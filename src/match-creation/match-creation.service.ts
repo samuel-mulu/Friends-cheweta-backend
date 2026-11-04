@@ -18,14 +18,15 @@ import { withFinancialTiming } from '../common/utils/financial-instrumentation.u
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
 
-type Source = 'CHALLENGE' | 'QUICK_MATCH';
+export type MatchSource = 'CHALLENGE' | 'REMATCH' | 'INVITE';
 
 type CreateSecuredMatchInput = {
   gameModeId: string;
   playerIds: [string, string];
   challengeId?: string;
   matchmakingKey?: string;
-  source: Source;
+  source: MatchSource;
+  rematchOfMatchId?: string;
 };
 
 @Injectable()
@@ -95,6 +96,7 @@ export class MatchCreationService {
                 challengeId: input.challengeId,
                 matchmakingKey: input.matchmakingKey,
                 source: input.source,
+                rematchOfMatchId: input.rematchOfMatchId,
                 participants: {
                   create: input.playerIds.map((userId, seat) => ({ userId, seat })),
                 },

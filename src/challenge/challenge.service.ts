@@ -5,16 +5,18 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { COMMITTED_MATCH_STATUSES } from '../common/match-status';
+import { MatchStatus } from '../generated/prisma/enums';
 import { LobbyService } from '../lobby/lobby.service';
 import { LOBBY_TTL_SECONDS } from '../lobby/lobby.types';
-import { MatchCreationService } from '../match-creation/match-creation.service';
+import { MatchCreationService, MatchSource } from '../match-creation/match-creation.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import {
   ChallengeAcceptFailedError,
   ChallengeEventName,
+  ChallengeKind,
   ChallengeRecord,
   ChallengeTransition,
   ChallengeView,
@@ -32,6 +34,19 @@ const RECORD_TTL_SECONDS = 300;
 /** An ACCEPTING challenge older than this is resolved by the sweep (match creation is bounded well below it). */
 const STALE_ACCEPTING_MS = 60_000;
 const COMMAND_TTL_SECONDS = 300;
+/** A rematch offer stays open this long; it can be requested this long after the match finished. */
+const REMATCH_TTL_MS = 30_000;
+const REMATCH_WINDOW_MS = 10 * 60_000;
+/** Invite codes: 10 chars from a 32-symbol alphabet (50 bits), valid for 10 minutes. */
+const INVITE_TTL_MS = 10 * 60_000;
+const INVITE_CODE_LENGTH = 10;
+const INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+const MATCH_SOURCE: Record<ChallengeKind, MatchSource> = {
+  LOBBY: 'CHALLENGE',
+  REMATCH: 'REMATCH',
+  INVITE: 'INVITE',
+};
 
 @Injectable()
 export class ChallengeService {
@@ -71,6 +86,7 @@ export class ChallengeService {
     const now = Date.now();
     const record: ChallengeRecord = {
       id: randomUUID(),
+      kind: 'LOBBY',
       gameModeId: challenger.gameModeId,
       challengerId,
       opponentId,
@@ -158,6 +174,143 @@ export class ChallengeService {
     if (claim !== 'OK')
       throw new ConflictException({ code: claim, message: 'Challenge is no longer pending.' });
 
+    return this.completeAccept(challenge, userId, commandId);
+  }
+
+  /**
+   * Offer a rematch to the other player of a recently finished match. Uses
+   * the same accept/reject/cancel/expiry path as lobby challenges.
+   */
+  async createRematch(
+    userId: string,
+    matchId: string,
+    commandId: string,
+  ): Promise<{ challenge: ChallengeView; duplicate: boolean }> {
+    const duplicate = await this.commandResult(commandId, userId);
+    if (duplicate) return { challenge: await this.view(duplicate.challengeId), duplicate: true };
+
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      select: {
+        status: true,
+        gameModeId: true,
+        finishedAt: true,
+        participants: { select: { userId: true } },
+      },
+    });
+    if (!match)
+      throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
+    const playerIds = match.participants.map((participant) => participant.userId);
+    if (!playerIds.includes(userId)) {
+      throw new ForbiddenException({
+        code: 'MATCH_ACCESS_DENIED',
+        message: 'You are not part of this match.',
+      });
+    }
+    if (match.status !== MatchStatus.FINISHED || playerIds.length !== 2) {
+      throw new ConflictException({
+        code: 'REMATCH_NOT_AVAILABLE',
+        message: 'Only a finished match can be rematched.',
+      });
+    }
+    if (!match.finishedAt || Date.now() - match.finishedAt.getTime() > REMATCH_WINDOW_MS) {
+      throw new ConflictException({
+        code: 'REMATCH_EXPIRED',
+        message: 'The rematch window has closed.',
+      });
+    }
+    const opponentId = playerIds.find((id) => id !== userId)!;
+    await this.lobby.assertCanPlay([userId, opponentId], match.gameModeId);
+
+    const record = this.newRecord('REMATCH', match.gameModeId, userId, opponentId, REMATCH_TTL_MS, {
+      sourceMatchId: matchId,
+    });
+    await this.reserveDirect(record, [userId, opponentId]);
+    await this.storeCommand(commandId, userId, record.id);
+    return { challenge: await this.toView(record), duplicate: false };
+  }
+
+  /** Create a shareable invite code for this mode; the first eligible player to join it plays. */
+  async createInvite(
+    userId: string,
+    gameModeId: string,
+    commandId: string,
+  ): Promise<{ challenge: ChallengeView; duplicate: boolean }> {
+    const duplicate = await this.commandResult(commandId, userId);
+    if (duplicate) return { challenge: await this.view(duplicate.challengeId), duplicate: true };
+    await this.lobby.assertCanPlay([userId], gameModeId);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const inviteCode = this.inviteCode();
+      const record = this.newRecord('INVITE', gameModeId, userId, '', INVITE_TTL_MS, {
+        inviteCode,
+      });
+      if (!(await this.reserveDirect(record, [userId], this.inviteKey(inviteCode)))) continue; // code collision
+      await this.storeCommand(commandId, userId, record.id);
+      return { challenge: await this.toView(record), duplicate: false };
+    }
+    throw new ConflictException({
+      code: 'INVITE_CODE_UNAVAILABLE',
+      message: 'Could not create an invite. Please try again.',
+    });
+  }
+
+  /** Join an invite by code. Joining is accepting: it creates the match. */
+  async joinInvite(
+    userId: string,
+    rawCode: string,
+    commandId: string,
+  ): Promise<ChallengeTransition & { duplicate: boolean }> {
+    const code = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const duplicate = await this.commandResult(commandId, userId);
+    if (duplicate) {
+      const match = await this.findMatch(duplicate.challengeId);
+      if (match)
+        return { ...(await this.markAccepted(duplicate.challengeId, match)), duplicate: true };
+    }
+
+    const challengeId = await this.redis.raw().get(this.inviteKey(code));
+    const challenge = challengeId
+      ? await this.redis.getJson<ChallengeRecord>(this.challengeKey(challengeId))
+      : null;
+    if (!challenge || challenge.kind !== 'INVITE') {
+      throw new NotFoundException({ code: 'INVITE_NOT_FOUND', message: 'Invite code not found.' });
+    }
+    if (challenge.challengerId === userId) {
+      throw new ConflictException({
+        code: 'INVITE_SELF',
+        message: 'You cannot join your own invite.',
+      });
+    }
+    await this.lobby.assertCanPlay([challenge.challengerId, userId], challenge.gameModeId);
+
+    const claim = (await this.redis.raw().eval(CLAIM_INVITE_SCRIPT, {
+      keys: [
+        this.challengeKey(challenge.id),
+        this.reservationKey(challenge.challengerId),
+        this.reservationKey(userId),
+      ],
+      arguments: [challenge.id, userId, String(Date.now()), String(RECORD_TTL_SECONDS)],
+    })) as string;
+    if (claim === 'CHALLENGE_EXPIRED') {
+      const expired = await this.finish(challenge, 'EXPIRED', 'challenge:expired');
+      throw new ChallengeAcceptFailedError(
+        new ConflictException({ code: 'CHALLENGE_EXPIRED', message: 'Invite has expired.' }),
+        expired ?? this.emptyTransition(challenge, 'challenge:expired'),
+      );
+    }
+    if (claim !== 'OK')
+      throw new ConflictException({ code: claim, message: 'Invite is no longer available.' });
+    return this.completeAccept({ ...challenge, opponentId: userId }, userId, commandId);
+  }
+
+  /** After a successful claim (status ACCEPTING): create the match, or release the claim on failure. */
+  private async completeAccept(
+    challenge: ChallengeRecord,
+    userId: string,
+    commandId: string,
+  ): Promise<ChallengeTransition & { duplicate: boolean }> {
+    const challengeId = challenge.id;
     this.logger.log(`challenge_accept_started challenge=${challengeId} command=${commandId}`);
     let match: MatchSummary;
     try {
@@ -165,7 +318,8 @@ export class ChallengeService {
         gameModeId: challenge.gameModeId,
         playerIds: [challenge.challengerId, challenge.opponentId],
         challengeId,
-        source: 'CHALLENGE',
+        source: MATCH_SOURCE[challenge.kind ?? 'LOBBY'],
+        rematchOfMatchId: challenge.sourceMatchId,
       })) as MatchSummary;
     } catch (error) {
       // The transaction may have committed even though the call failed.
@@ -420,6 +574,67 @@ export class ChallengeService {
     return transition;
   }
 
+  private newRecord(
+    kind: ChallengeKind,
+    gameModeId: string,
+    challengerId: string,
+    opponentId: string,
+    ttlMs: number,
+    extra: Partial<ChallengeRecord> = {},
+  ): ChallengeRecord {
+    const now = Date.now();
+    return {
+      id: randomUUID(),
+      kind,
+      gameModeId,
+      challengerId,
+      opponentId,
+      status: 'PENDING',
+      createdAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + ttlMs).toISOString(),
+      expiresAtMs: now + ttlMs,
+      ...extra,
+    };
+  }
+
+  /**
+   * Reserve a non-lobby challenge: each player may hold one open challenge.
+   * Returns false only on an invite-code collision.
+   */
+  private async reserveDirect(
+    record: ChallengeRecord,
+    playerIds: string[],
+    inviteKey?: string,
+  ): Promise<boolean> {
+    const ttlSeconds = Math.ceil((record.expiresAtMs - Date.now()) / 1000) + RECORD_TTL_SECONDS;
+    const result = (await this.redis.raw().eval(RESERVE_DIRECT_SCRIPT, {
+      keys: [
+        this.challengeKey(record.id),
+        this.expiresKey(),
+        inviteKey ?? this.redis.key('challenge', 'invite', '-'),
+        ...playerIds.map((id) => this.reservationKey(id)),
+      ],
+      arguments: [
+        JSON.stringify(record),
+        record.id,
+        String(record.expiresAtMs),
+        String(ttlSeconds),
+        inviteKey ? '1' : '0',
+      ],
+    })) as string;
+    if (result === 'INVITE_CODE_TAKEN') return false;
+    if (result !== 'OK')
+      throw new ConflictException({ code: result, message: 'A challenge is already pending.' });
+    return true;
+  }
+
+  private inviteCode(): string {
+    let code = '';
+    for (let i = 0; i < INVITE_CODE_LENGTH; i += 1)
+      code += INVITE_ALPHABET[randomInt(INVITE_ALPHABET.length)];
+    return code;
+  }
+
   private async findMatch(challengeId: string): Promise<MatchSummary | null> {
     return (await this.matchCreation.findByChallengeId(challengeId)) as MatchSummary | null;
   }
@@ -472,6 +687,10 @@ export class ChallengeService {
       { challengeId },
       COMMAND_TTL_SECONDS,
     );
+  }
+
+  private inviteKey(code: string): string {
+    return this.redis.key('challenge', 'invite', code);
   }
 
   private challengeKey(id: string): string {
@@ -582,4 +801,36 @@ end
 redis.call('del', KEYS[4], KEYS[5])
 redis.call('zrem', KEYS[6], record.challengerId, record.opponentId)
 redis.call('zrem', KEYS[7], ARGV[1])
+return 'OK'`;
+
+// KEYS: challenge expires inviteKey res...
+// ARGV: recordJson id expiresAtMs ttl hasInvite
+const RESERVE_DIRECT_SCRIPT = `
+for i = 4, #KEYS do
+  if redis.call('exists', KEYS[i]) == 1 then return 'CHALLENGE_ALREADY_PENDING' end
+end
+local ttl = tonumber(ARGV[4])
+if ARGV[5] == '1' then
+  if not redis.call('set', KEYS[3], ARGV[2], 'NX', 'EX', ttl) then return 'INVITE_CODE_TAKEN' end
+end
+for i = 4, #KEYS do redis.call('set', KEYS[i], ARGV[2], 'EX', ttl) end
+redis.call('set', KEYS[1], ARGV[1], 'EX', ttl)
+redis.call('zadd', KEYS[2], ARGV[3], ARGV[2])
+return 'OK'`;
+
+// KEYS: challenge resInviter resJoiner
+// ARGV: id joinerId nowMs recordTtl
+const CLAIM_INVITE_SCRIPT = `
+local raw = redis.call('get', KEYS[1])
+if not raw then return 'INVITE_NOT_FOUND' end
+local record = cjson.decode(raw)
+if record.status ~= 'PENDING' or record.opponentId ~= '' then return 'CHALLENGE_NOT_PENDING' end
+if tonumber(record.expiresAtMs) <= tonumber(ARGV[3]) then return 'CHALLENGE_EXPIRED' end
+if redis.call('get', KEYS[2]) ~= ARGV[1] then return 'CHALLENGE_NOT_PENDING' end
+if redis.call('exists', KEYS[3]) == 1 then return 'CHALLENGE_ALREADY_PENDING' end
+record.opponentId = ARGV[2]
+record.status = 'ACCEPTING'
+record.acceptingAtMs = tonumber(ARGV[3])
+redis.call('set', KEYS[1], cjson.encode(record), 'EX', tonumber(ARGV[4]))
+redis.call('set', KEYS[3], ARGV[1], 'EX', tonumber(ARGV[4]))
 return 'OK'`;

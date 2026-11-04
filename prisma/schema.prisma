@@ -226,6 +226,8 @@ model Match {
   sessionCode      String?     @unique
   challengeId      String?     @unique
   source           String?
+  /// Set when this match was created by a rematch of a finished match.
+  rematchOfMatchId String?
   matchmakingKey  String?     @unique
   entrySecuredAt   DateTime?
   cancelledAt      DateTime?
@@ -249,6 +251,7 @@ model Match {
   @@index([gameId, status, createdAt])
   @@index([gameModeId, status, createdAt])
   @@index([status, updatedAt])
+  @@index([rematchOfMatchId])
 }
 
 model MatchParticipant {

@@ -26,7 +26,9 @@ async function createHarness() {
   const committedUsers = new Set<string>();
   const matches = new Map<string, any>();
 
+  const finishedMatches = new Map<string, any>();
   const prisma = {
+    match: { findUnique: jest.fn(async ({ where }: any) => finishedMatches.get(where.id) ?? null) },
     gameMode: {
       findUnique: jest.fn(async () => ({
         id: MODE,
@@ -75,18 +77,22 @@ async function createHarness() {
   let creationGate: Promise<void> | null = null;
   const matchCreation = {
     findByChallengeId: jest.fn(async (challengeId: string) => matches.get(challengeId) ?? null),
-    createSecuredMatch: jest.fn(async ({ challengeId, playerIds }: any) => {
-      if (creationGate) await creationGate;
-      if (matches.has(challengeId)) throw new Error('P2002 challengeId');
-      const match = {
-        id: `match-${challengeId}`,
-        gameModeId: MODE,
-        status: 'READY',
-        participants: playerIds.map((userId: string, seat: number) => ({ userId, seat })),
-      };
-      matches.set(challengeId, match);
-      return match;
-    }),
+    createSecuredMatch: jest.fn(
+      async ({ challengeId, playerIds, source, rematchOfMatchId }: any) => {
+        if (creationGate) await creationGate;
+        if (matches.has(challengeId)) throw new Error('P2002 challengeId');
+        const match = {
+          source,
+          rematchOfMatchId,
+          id: `match-${challengeId}`,
+          gameModeId: MODE,
+          status: 'READY',
+          participants: playerIds.map((userId: string, seat: number) => ({ userId, seat })),
+        };
+        matches.set(challengeId, match);
+        return match;
+      },
+    ),
   };
 
   const lobby = new LobbyService(prisma as any, redis);
@@ -103,6 +109,7 @@ async function createHarness() {
     matchCreation,
     matches,
     committedUsers,
+    finishedMatches,
     cleanup,
     holdMatchCreation: () => {
       const gate = deferred();
@@ -325,6 +332,132 @@ describe('ChallengeService (real Redis Lua)', () => {
     h.committedUsers.add('A');
     await expect(h.service.create('A', 'B', cmd())).rejects.toMatchObject({
       response: { code: 'LOBBY_ACTIVE_MATCH' },
+    });
+  });
+
+  describe('rematch', () => {
+    const finish = (id = 'old-1', finishedAgoMs = 1_000) =>
+      h.finishedMatches.set(id, {
+        status: 'FINISHED',
+        gameModeId: MODE,
+        finishedAt: new Date(Date.now() - finishedAgoMs),
+        participants: [{ userId: 'A' }, { userId: 'B' }],
+      });
+
+    it('accepting creates exactly one new match linked to the previous one', async () => {
+      finish();
+      const { challenge } = await h.service.createRematch('A', 'old-1', cmd());
+      expect(challenge).toMatchObject({ kind: 'REMATCH', opponentId: 'B', sourceMatchId: 'old-1' });
+
+      const accepted = await h.service.accept('B', challenge.id, cmd());
+      expect(accepted.challenge.match).toMatchObject({
+        source: 'REMATCH',
+        rematchOfMatchId: 'old-1',
+      });
+
+      const again = await h.service.accept('B', challenge.id, cmd());
+      expect(again.challenge.match?.id).toBe(accepted.challenge.match?.id);
+      expect(h.matchCreation.createSecuredMatch).toHaveBeenCalledTimes(1);
+    });
+
+    it('both players requesting at once yields one pending rematch', async () => {
+      finish();
+      const results = await Promise.allSettled([
+        h.service.createRematch('A', 'old-1', cmd()),
+        h.service.createRematch('B', 'old-1', cmd()),
+      ]);
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      const rejected = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')!;
+      expect(rejected.reason).toMatchObject({ response: { code: 'CHALLENGE_ALREADY_PENDING' } });
+    });
+
+    it('is recoverable after reconnect and can be rejected cleanly', async () => {
+      finish();
+      const { challenge } = await h.service.createRematch('A', 'old-1', cmd());
+      expect((await h.service.activeForUser('B'))?.id).toBe(challenge.id);
+
+      await h.service.reject('B', challenge.id, cmd());
+      expect(await h.service.activeForUser('B')).toBeNull();
+      await expect(h.service.accept('B', challenge.id, cmd())).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+    });
+
+    it('only participants of a recently finished match can request it', async () => {
+      finish();
+      await expect(h.service.createRematch('C', 'old-1', cmd())).rejects.toMatchObject({
+        response: { code: 'MATCH_ACCESS_DENIED' },
+      });
+      h.finishedMatches.set('live', { ...h.finishedMatches.get('old-1'), status: 'PLAYING' });
+      await expect(h.service.createRematch('A', 'live', cmd())).rejects.toMatchObject({
+        response: { code: 'REMATCH_NOT_AVAILABLE' },
+      });
+      finish('stale', 60 * 60_000);
+      await expect(h.service.createRematch('A', 'stale', cmd())).rejects.toMatchObject({
+        response: { code: 'REMATCH_EXPIRED' },
+      });
+    });
+
+    it('expires when unanswered', async () => {
+      finish();
+      const { challenge } = await h.service.createRematch('A', 'old-1', cmd());
+      const [expired] = await h.service.sweep(challenge.expiresAtMs + 1);
+      expect(expired.event).toBe('challenge:expired');
+      expect(await h.service.activeForUser('A')).toBeNull();
+    });
+  });
+
+  describe('invite', () => {
+    it('joining by code (any case/format) creates the match with the inviter', async () => {
+      const { challenge } = await h.service.createInvite('A', MODE, cmd());
+      expect(challenge.inviteCode).toMatch(/^[A-Z2-9]{10}$/);
+
+      const typed = `${challenge.inviteCode!.slice(0, 5).toLowerCase()}-${challenge.inviteCode!.slice(5)}`;
+      const joined = await h.service.joinInvite('C', typed, cmd());
+
+      expect(joined.challenge.match).toMatchObject({ source: 'INVITE' });
+      expect(joined.matchReady.map((m) => m.userId).sort()).toEqual(['A', 'C']);
+    });
+
+    it('two players joining the same code at once create one match', async () => {
+      const { challenge } = await h.service.createInvite('A', MODE, cmd());
+      const results = await Promise.allSettled([
+        h.service.joinInvite('B', challenge.inviteCode!, cmd()),
+        h.service.joinInvite('C', challenge.inviteCode!, cmd()),
+      ]);
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      expect(h.matches.size).toBe(1);
+    });
+
+    it('rejects own code, unknown codes, and cancelled invites', async () => {
+      const { challenge } = await h.service.createInvite('A', MODE, cmd());
+      await expect(h.service.joinInvite('A', challenge.inviteCode!, cmd())).rejects.toMatchObject({
+        response: { code: 'INVITE_SELF' },
+      });
+      await expect(h.service.joinInvite('B', 'ZZZZZZZZZZ', cmd())).rejects.toMatchObject({
+        response: { code: 'INVITE_NOT_FOUND' },
+      });
+
+      await h.service.cancel('A', challenge.id, cmd());
+      await expect(h.service.joinInvite('B', challenge.inviteCode!, cmd())).rejects.toMatchObject({
+        response: { code: 'CHALLENGE_NOT_PENDING' },
+      });
+      expect(h.matches.size).toBe(0);
+    });
+
+    it('an inviter cannot hold two open invites', async () => {
+      await h.service.createInvite('A', MODE, cmd());
+      await expect(h.service.createInvite('A', MODE, cmd())).rejects.toMatchObject({
+        response: { code: 'CHALLENGE_ALREADY_PENDING' },
+      });
+    });
+
+    it('disconnecting cancels a pending invite', async () => {
+      const { challenge } = await h.service.createInvite('A', MODE, cmd());
+      expect((await h.service.cancelForUser('A'))?.event).toBe('challenge:cancelled');
+      await expect(h.service.joinInvite('B', challenge.inviteCode!, cmd())).rejects.toBeInstanceOf(
+        ConflictException,
+      );
     });
   });
 });
