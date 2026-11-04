@@ -1,4 +1,5 @@
-import { IsISO8601, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsIn, IsISO8601, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { MATCH_REACTIONS, MatchReactionId } from '../chat.types';
 
 export class LobbyChatSendDto {
   @IsUUID()
@@ -45,4 +46,12 @@ export class DirectChatPeerDto {
   @IsOptional()
   @IsISO8601()
   before?: string;
+}
+
+export class MatchReactionDto {
+  @IsUUID()
+  matchId!: string;
+
+  @IsIn(MATCH_REACTIONS)
+  reactionId!: MatchReactionId;
 }

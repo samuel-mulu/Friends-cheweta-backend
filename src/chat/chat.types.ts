@@ -32,3 +32,22 @@ export function normalizeChatText(value: string): string {
   }
   return text;
 }
+
+/** Quick phrases and emojis players can send during a match (ids only; the app renders them). */
+export const MATCH_REACTIONS = [
+  'good_luck',
+  'nice_move',
+  'hurry_up',
+  'oops',
+  'thanks',
+  'gg',
+  'thumbs_up',
+  'laugh',
+  'angry',
+  'wow',
+  'party',
+  'pray',
+] as const;
+export type MatchReactionId = (typeof MATCH_REACTIONS)[number];
+
+export type MatchReaction = { userId: string; reactionId: MatchReactionId; createdAt: string };

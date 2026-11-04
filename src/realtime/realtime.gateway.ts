@@ -31,6 +31,7 @@ import {
   DirectChatSendDto,
   LobbyChatSendDto,
   MatchChatHistoryDto,
+  MatchReactionDto,
   MatchChatSendDto,
 } from '../chat/dto/chat.dto';
 import { LudoRuntimeCommand } from '../games/ludo/runtime';
@@ -414,6 +415,18 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     try {
       const user = this.requireUser(socket);
       return { ok: true, data: await this.directChat.conversations(user.id) };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('match:reaction')
+  async sendReaction(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: MatchReactionDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      const reaction = await this.chat.react(user.id, dto.matchId, dto.reactionId);
+      this.publisher.publishRoom(this.publisher.matchRoom(dto.matchId), 'match:reaction', reaction, dto.matchId);
+      return { ok: true };
     } catch (error) {
       return this.errorAck(error);
     }

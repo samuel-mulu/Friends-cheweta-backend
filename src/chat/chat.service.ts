@@ -11,7 +11,7 @@ import { MatchStatus, UserStatus } from '../generated/prisma/enums';
 import { LobbyService } from '../lobby/lobby.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
-import { ChatMessage, normalizeChatText } from './chat.types';
+import { ChatMessage, MatchReaction, MatchReactionId, normalizeChatText } from './chat.types';
 
 @Injectable()
 export class ChatService {
@@ -89,6 +89,25 @@ export class ChatService {
 
   async getMatchHistory(matchId: string): Promise<ChatMessage[]> {
     return this.history(this.matchChatKey(matchId));
+  }
+
+  /**
+   * Ephemeral match reaction (not stored). Participants only; at most one per
+   * 1.5 s per player so reactions stay fun instead of spammy.
+   */
+  async react(
+    userId: string,
+    matchId: string,
+    reactionId: MatchReactionId,
+  ): Promise<MatchReaction> {
+    await this.assertMatchParticipant(userId, matchId);
+    const allowed = await this.redis
+      .raw()
+      .set(this.redis.key('chat', 'reaction', matchId, userId), '1', { NX: true, PX: 1500 });
+    if (allowed !== 'OK') {
+      throw new ConflictException({ code: 'CHAT_RATE_LIMITED', message: 'Slow down a little.' });
+    }
+    return { userId, reactionId, createdAt: new Date().toISOString() };
   }
 
   async getMatchHistoryForUser(userId: string, matchId: string): Promise<ChatMessage[]> {
