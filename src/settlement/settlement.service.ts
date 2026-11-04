@@ -7,6 +7,7 @@ import { LudoMatchRuntimeState } from '../games/ludo/runtime';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RiskService } from '../risk/risk.service';
+import { StatsService } from '../stats/stats.service';
 import { WalletService } from '../wallet/wallet.service';
 
 // Safety ceiling only - normal settlement should finish far below this.
@@ -28,6 +29,7 @@ export class SettlementService {
     private readonly wallet: WalletService,
     private readonly notifications: NotificationsService,
     private readonly risk: RiskService,
+    private readonly stats: StatsService,
   ) {}
 
   settleLudoMatch(state: LudoMatchRuntimeState) {
@@ -156,7 +158,16 @@ export class SettlementService {
   }
 
   private async runPostSettlementTasks(matchId: string, winnerOrder: string[]): Promise<void> {
-    try {
+    // Independent steps: one failing never skips the others.
+    const step = async (name: string, run: () => Promise<unknown>) => {
+      try {
+        await run();
+      } catch (error) {
+        this.logger.warn(`Post-settlement ${name} failed for ${matchId}: ${(error as Error).message}`);
+      }
+    };
+    await step('stats', () => this.stats.recordMatch(matchId));
+    await step('notifications', async () => {
       for (const [index, userId] of winnerOrder.entries()) {
         await this.notifications.create({
           userId,
@@ -167,11 +178,10 @@ export class SettlementService {
           dedupeKey: `match-result:${matchId}:${userId}`,
         });
       }
-      await this.risk.analyzeFinishedMatch(matchId);
-    } catch (error) {
-      this.logger.warn(`Post-settlement follow-up failed for ${matchId}: ${(error as Error).message}`);
-    }
+    });
+    await step('risk', () => this.risk.analyzeFinishedMatch(matchId));
   }
+
 
   async getByMatchId(matchId: string) {
     const settlement = await this.prisma.matchSettlement.findUnique({ where: { matchId } });

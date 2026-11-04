@@ -163,7 +163,7 @@ function createService() {
   const wallet = new WalletService(prisma);
   const notifications = { create: jest.fn(async () => undefined) };
   const risk = { analyzeFinishedMatch: jest.fn(async () => undefined) };
-  const settlement = new SettlementService(prisma, wallet, notifications as any, risk as any);
+  const settlement = new SettlementService(prisma, wallet, notifications as any, risk as any, { recordMatch: jest.fn(async () => 0) } as any);
   return { settlement, store, notifications, risk };
 }
 
