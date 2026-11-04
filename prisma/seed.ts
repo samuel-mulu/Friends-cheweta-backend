@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { randomBytes } from 'node:crypto';
 import { hash } from 'bcryptjs';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client';
@@ -8,6 +9,13 @@ import { normalizeEthiopianPhone } from '../src/common/utils/phone.util';
 const ADMIN_ACCOUNTS = [
   { fullName: 'Friends Admin 1', phone: '0911111111', password: '12345678' },
   { fullName: 'Friends Admin 2', phone: '0911111112', password: '12345678' },
+] as const;
+
+/** Practice opponents (Phase 3). Fixed ids-by-phone so the seed is re-runnable. */
+const BOT_ACCOUNTS = [
+  { fullName: 'Bot Easy', phone: '0900000001' },
+  { fullName: 'Bot Normal', phone: '0900000002' },
+  { fullName: 'Bot Hard', phone: '0900000003' },
 ] as const;
 
 async function main(): Promise<void> {
@@ -46,6 +54,25 @@ async function main(): Promise<void> {
       });
 
       seededPhones.push(phoneNumber);
+    }
+
+    for (const bot of BOT_ACCOUNTS) {
+      const phoneNumber = normalizeEthiopianPhone(bot.phone);
+      // Bots never log in: a random, discarded password.
+      const passwordHash = await hash(randomBytes(32).toString('hex'), 12);
+      await prisma.user.upsert({
+        where: { phoneNumber },
+        update: { fullName: bot.fullName, isBot: true, status: UserStatus.ACTIVE },
+        create: {
+          fullName: bot.fullName,
+          phoneNumber,
+          passwordHash,
+          role: UserRole.PLAYER,
+          status: UserStatus.ACTIVE,
+          isBot: true,
+          wallet: { create: {} },
+        },
+      });
     }
 
     const ludo = await prisma.game.upsert({
@@ -91,7 +118,7 @@ async function main(): Promise<void> {
       });
     }
 
-    console.log(`Seeded admins ${seededPhones.join(', ')} and Ludo game catalog.`);
+    console.log(`Seeded admins ${seededPhones.join(', ')}, ${BOT_ACCOUNTS.length} practice bots and Ludo game catalog.`);
   } finally {
     await prisma.$disconnect();
   }

@@ -70,6 +70,8 @@ model User {
   passwordHash String
   role         UserRole   @default(PLAYER)
   status       UserStatus @default(ACTIVE)
+  /// Practice-mode computer opponent; never logs in or joins lobbies.
+  isBot        Boolean    @default(false)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
