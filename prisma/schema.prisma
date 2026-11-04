@@ -82,6 +82,8 @@ model User {
   notifications     Notification[]
   riskFlags         RiskFlag[]
   auditActions      AuditLog[]
+  directMessagesSent     DirectMessage[] @relation("DirectMessagesSent")
+  directMessagesReceived DirectMessage[] @relation("DirectMessagesReceived")
 
   @@index([status])
   @@index([role])
@@ -384,4 +386,23 @@ model AuditLog {
   @@index([actorUserId, createdAt])
   @@index([entityType, entityId, createdAt])
   @@index([action, createdAt])
+}
+
+/// Private 1:1 messages. conversationId = the two user ids sorted and joined by ':'.
+model DirectMessage {
+  id              String    @id @default(uuid())
+  conversationId  String
+  senderId        String
+  recipientId     String
+  text            String
+  clientCommandId String
+  readAt          DateTime?
+  createdAt       DateTime  @default(now())
+
+  sender    User @relation("DirectMessagesSent", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient User @relation("DirectMessagesReceived", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@unique([senderId, clientCommandId])
+  @@index([conversationId, createdAt])
+  @@index([recipientId, readAt])
 }

@@ -145,6 +145,24 @@ describe('ChallengeService (real Redis Lua)', () => {
     expect(await h.state('B')).toBe('CHALLENGED');
   });
 
+  it('a player who is only online can challenge a ready player in one step', async () => {
+    await h.lobby.unready('A');
+    const { challenge } = await h.service.create('A', 'B', cmd());
+    expect(challenge.status).toBe('PENDING');
+    expect(await h.state('A')).toBe('CHALLENGED');
+
+    // If the challenge ends, the challenger is left READY (they wanted to play).
+    await h.service.reject('B', challenge.id, cmd());
+    expect(await h.state('A')).toBe('READY');
+  });
+
+  it('the target must still be ready', async () => {
+    await h.lobby.unready('B');
+    await expect(h.service.create('A', 'B', cmd())).rejects.toMatchObject({
+      response: { code: 'CHALLENGE_TARGET_NOT_READY' },
+    });
+  });
+
   it('accept creates exactly one match and removes both players from the lobby', async () => {
     const { challenge } = await h.service.create('A', 'B', cmd());
     const result = await h.service.accept('B', challenge.id, cmd());

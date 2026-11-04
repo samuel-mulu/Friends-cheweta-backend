@@ -733,7 +733,9 @@ if not aCtx or not bCtx then return 'LOBBY_NOT_JOINED' end
 local a = cjson.decode(aCtx)
 local b = cjson.decode(bCtx)
 if a.gameModeId ~= b.gameModeId then return 'LOBBY_DIFFERENT_MODE' end
-if a.state ~= 'READY' then return 'LOBBY_NOT_READY' end
+-- Challenging is itself an intent to play: an ONLINE challenger is readied
+-- by this same atomic step (only the target must already be READY).
+if a.state ~= 'READY' and a.state ~= 'ONLINE' then return 'LOBBY_USER_BUSY' end
 if b.state ~= 'READY' then return 'CHALLENGE_TARGET_NOT_READY' end
 if redis.call('exists', KEYS[3]) == 1 or redis.call('exists', KEYS[4]) == 1 then return 'LOBBY_USER_BUSY' end
 local record = cjson.decode(ARGV[1])

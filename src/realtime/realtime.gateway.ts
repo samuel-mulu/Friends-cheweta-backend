@@ -22,7 +22,14 @@ import {
 } from '../challenge/dto/challenge.dto';
 import { ChallengeAcceptFailedError } from '../challenge/challenge.types';
 import { ChatService } from '../chat/chat.service';
-import { LobbyChatSendDto, MatchChatHistoryDto, MatchChatSendDto } from '../chat/dto/chat.dto';
+import { DirectChatService } from '../chat/direct-chat.service';
+import {
+  DirectChatPeerDto,
+  DirectChatSendDto,
+  LobbyChatSendDto,
+  MatchChatHistoryDto,
+  MatchChatSendDto,
+} from '../chat/dto/chat.dto';
 import { LudoRuntimeCommand } from '../games/ludo/runtime';
 import { LobbyCommandDto, LobbyJoinDto } from '../lobby/dto/lobby.dto';
 import { LobbyService } from '../lobby/lobby.service';
@@ -55,6 +62,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     private readonly lobby: LobbyService,
     private readonly challenge: ChallengeService,
     private readonly chat: ChatService,
+    private readonly directChat: DirectChatService,
     private readonly publisher: RealtimePublisherService,
     private readonly timeouts: TurnTimeoutService,
   ) {}
@@ -339,6 +347,55 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         this.server.to(this.publisher.matchRoom(dto.matchId)).emit('match:chat:message', this.envelope(result.message, dto.matchId));
       }
       return { ok: true, commandId: dto.commandId, duplicate: result.duplicate, data: result.message };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  /** Private message: delivered to both users' personal rooms (all their devices). */
+  @SubscribeMessage('chat:direct:send')
+  async sendDirectChat(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: DirectChatSendDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      const result = await this.directChat.send(user.id, dto.toUserId, dto.commandId, dto.text);
+      if (!result.duplicate) {
+        this.publisher.publishUser(dto.toUserId, 'chat:direct:message', result.message);
+        this.publisher.publishUser(user.id, 'chat:direct:message', result.message);
+      }
+      return { ok: true, commandId: dto.commandId, duplicate: result.duplicate, data: result.message };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('chat:direct:history')
+  async directChatHistory(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: DirectChatPeerDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      return { ok: true, data: await this.directChat.history(user.id, dto.peerId, dto.before) };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('chat:direct:read')
+  async readDirectChat(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: DirectChatPeerDto): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      const changed = await this.directChat.markRead(user.id, dto.peerId);
+      // Other devices of mine update their unread badge.
+      if (changed > 0) this.publisher.publishUser(user.id, 'chat:direct:read', { peerId: dto.peerId });
+      return { ok: true, data: { changed } };
+    } catch (error) {
+      return this.errorAck(error);
+    }
+  }
+
+  @SubscribeMessage('chat:conversations')
+  async conversations(@ConnectedSocket() socket: AuthenticatedSocket): Promise<any> {
+    try {
+      const user = this.requireUser(socket);
+      return { ok: true, data: await this.directChat.conversations(user.id) };
     } catch (error) {
       return this.errorAck(error);
     }

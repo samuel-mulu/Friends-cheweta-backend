@@ -62,7 +62,13 @@ describe('ChatService', () => {
       },
     };
     const prisma = {
-      user: { findUnique: jest.fn(async ({ where }: any) => ({ id: where.id, fullName: where.id, status: UserStatus.ACTIVE })) },
+      user: {
+        findUnique: jest.fn(async ({ where }: any) => ({
+          id: where.id,
+          fullName: where.id,
+          status: UserStatus.ACTIVE,
+        })),
+      },
       gameMode: { findUnique: jest.fn(async () => ({ enabled: true, game: { enabled: true } })) },
       match: {
         findUnique: jest.fn(async ({ where }: any) => ({
@@ -78,17 +84,31 @@ describe('ChatService', () => {
         return { gameModeId: 'mode-1', state: 'ONLINE', joinedAt: new Date().toISOString() };
       }),
     };
-    return { service: new ChatService(prisma as any, redis as any, lobby as any), raw, redis, prisma };
+    return {
+      service: new ChatService(prisma as any, redis as any, lobby as any),
+      raw,
+      redis,
+      prisma,
+    };
   }
 
   it('rejects lobby chat from non-members', async () => {
     const { service } = createHarness();
-    await expect(service.sendLobbyMessage('OUT', '00000000-0000-4000-8000-000000000001', 'hello')).rejects.toBeInstanceOf(ConflictException);
+    await expect(
+      service.sendLobbyMessage('OUT', '00000000-0000-4000-8000-000000000001', 'hello'),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('rejects match chat from non-participants', async () => {
     const { service } = createHarness();
-    await expect(service.sendMatchMessage('C', '00000000-0000-4000-8000-000000000099', '00000000-0000-4000-8000-000000000002', 'hello')).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      service.sendMatchMessage(
+        'C',
+        '00000000-0000-4000-8000-000000000099',
+        '00000000-0000-4000-8000-000000000002',
+        'hello',
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('stores valid unicode lobby messages once with idempotency', async () => {
@@ -104,16 +124,27 @@ describe('ChatService', () => {
 
   it('stores valid match messages and applies match TTL', async () => {
     const { service, raw, redis } = createHarness();
-    const result = await service.sendMatchMessage('A', '00000000-0000-4000-8000-000000000099', '00000000-0000-4000-8000-000000000004', 'Good game');
+    const result = await service.sendMatchMessage(
+      'A',
+      '00000000-0000-4000-8000-000000000099',
+      '00000000-0000-4000-8000-000000000004',
+      'Good game',
+    );
 
     expect(result.message.scope).toBe('MATCH');
-    expect(raw.expiries.get(redis.key('match', '00000000-0000-4000-8000-000000000099', 'chat'))).toBe(86400);
+    expect(
+      raw.expiries.get(redis.key('match', '00000000-0000-4000-8000-000000000099', 'chat')),
+    ).toBe(86400);
   });
 
   it('rejects empty and too long messages', async () => {
     const { service } = createHarness();
-    await expect(service.sendLobbyMessage('A', '00000000-0000-4000-8000-000000000005', '   ')).rejects.toBeInstanceOf(BadRequestException);
-    await expect(service.sendLobbyMessage('A', '00000000-0000-4000-8000-000000000006', 'x'.repeat(161))).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.sendLobbyMessage('A', '00000000-0000-4000-8000-000000000005', '   '),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.sendLobbyMessage('A', '00000000-0000-4000-8000-000000000006', 'x'.repeat(161)),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('rate limits the sixth message in a window', async () => {
@@ -121,13 +152,19 @@ describe('ChatService', () => {
     for (let i = 0; i < 5; i += 1) {
       await service.sendLobbyMessage('A', `00000000-0000-4000-8000-00000000001${i}`, `msg ${i}`);
     }
-    await expect(service.sendLobbyMessage('A', '00000000-0000-4000-8000-000000000020', 'six')).rejects.toBeInstanceOf(ConflictException);
+    await expect(
+      service.sendLobbyMessage('A', '00000000-0000-4000-8000-000000000020', 'six'),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('keeps only the latest 50 history messages', async () => {
     const { service, raw, redis } = createHarness();
     for (let i = 0; i < 55; i += 1) {
-      await service.sendLobbyMessage('A', `00000000-0000-4000-8000-00000000${String(i).padStart(4, '0')}`, `msg ${i}`);
+      await service.sendLobbyMessage(
+        'A',
+        `00000000-0000-4000-8000-00000000${String(i).padStart(4, '0')}`,
+        `msg ${i}`,
+      );
       raw.strings.delete(redis.key('chat', 'rate', 'lobby', 'mode-1', 'A'));
     }
     const history = await service.getLobbyHistory('mode-1');
