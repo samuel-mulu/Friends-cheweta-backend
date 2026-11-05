@@ -65,6 +65,7 @@ export class ChallengeService {
     challengerId: string,
     opponentId: string,
     commandId: string,
+    tokensToWin = 4,
   ): Promise<{ challenge: ChallengeView; duplicate: boolean }> {
     const duplicate = await this.commandResult(commandId, challengerId);
     if (duplicate) return { challenge: await this.view(duplicate.challengeId), duplicate: true };
@@ -96,6 +97,7 @@ export class ChallengeService {
       createdAt: new Date(now).toISOString(),
       expiresAt: new Date(now + CHALLENGE_TTL_MS).toISOString(),
       expiresAtMs: now + CHALLENGE_TTL_MS,
+      tokensToWin,
     };
 
     const result = (await this.redis.raw().eval(RESERVE_SCRIPT, {
@@ -198,6 +200,7 @@ export class ChallengeService {
         gameModeId: true,
         finishedAt: true,
         source: true,
+        tokensToWin: true,
         participants: { select: { userId: true } },
       },
     });
@@ -226,8 +229,10 @@ export class ChallengeService {
     const opponentId = playerIds.find((id) => id !== userId)!;
     await this.lobby.assertCanPlay([userId, opponentId], match.gameModeId);
 
+    // A rematch is the same game again, goal included.
     const record = this.newRecord('REMATCH', match.gameModeId, userId, opponentId, REMATCH_TTL_MS, {
       sourceMatchId: matchId,
+      tokensToWin: match.tokensToWin,
     });
     await this.reserveDirect(record, [userId, opponentId]);
     await this.storeCommand(commandId, userId, record.id);
@@ -239,6 +244,7 @@ export class ChallengeService {
     userId: string,
     gameModeId: string,
     commandId: string,
+    tokensToWin = 4,
   ): Promise<{ challenge: ChallengeView; duplicate: boolean }> {
     const duplicate = await this.commandResult(commandId, userId);
     if (duplicate) return { challenge: await this.view(duplicate.challengeId), duplicate: true };
@@ -248,6 +254,7 @@ export class ChallengeService {
       const inviteCode = this.inviteCode();
       const record = this.newRecord('INVITE', gameModeId, userId, '', INVITE_TTL_MS, {
         inviteCode,
+        tokensToWin,
       });
       if (!(await this.reserveDirect(record, [userId], this.inviteKey(inviteCode)))) continue; // code collision
       await this.storeCommand(commandId, userId, record.id);
@@ -324,6 +331,7 @@ export class ChallengeService {
         challengeId,
         source: MATCH_SOURCE[challenge.kind ?? 'LOBBY'],
         rematchOfMatchId: challenge.sourceMatchId,
+        tokensToWin: challenge.tokensToWin,
       })) as MatchSummary;
     } catch (error) {
       // The transaction may have committed even though the call failed.

@@ -260,6 +260,7 @@ export class LudoRuntimeService {
       new CryptoDiceProvider(),
       undefined,
       match.rulesVersion,
+      { tokensToWin: match.tokensToWin },
     ).getState();
     // Two players joining at once both reach here; exactly one snapshot wins.
     const state = await this.repository.saveSnapshotIfAbsent(matchId, initial);

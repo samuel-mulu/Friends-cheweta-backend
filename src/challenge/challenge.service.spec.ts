@@ -163,6 +163,19 @@ describe('ChallengeService (real Redis Lua)', () => {
     });
   });
 
+  it('the chosen goal (first to N home) is carried to the match; default is 4', async () => {
+    const classic = await h.service.create('A', 'B', cmd());
+    expect(classic.challenge.tokensToWin).toBe(4);
+    await h.service.cancel('A', classic.challenge.id, cmd());
+
+    const { challenge } = await h.service.create('A', 'B', cmd(), 2);
+    expect(challenge.tokensToWin).toBe(2);
+    await h.service.accept('B', challenge.id, cmd());
+    expect(h.matchCreation.createSecuredMatch).toHaveBeenLastCalledWith(
+      expect.objectContaining({ tokensToWin: 2 }),
+    );
+  });
+
   it('accept creates exactly one match and removes both players from the lobby', async () => {
     const { challenge } = await h.service.create('A', 'B', cmd());
     const result = await h.service.accept('B', challenge.id, cmd());
@@ -359,8 +372,19 @@ describe('ChallengeService (real Redis Lua)', () => {
         status: 'FINISHED',
         gameModeId: MODE,
         finishedAt: new Date(Date.now() - finishedAgoMs),
+        tokensToWin: 3,
         participants: [{ userId: 'A' }, { userId: 'B' }],
       });
+
+    it('a rematch keeps the previous goal', async () => {
+      finish();
+      const { challenge } = await h.service.createRematch('A', 'old-1', cmd());
+      expect(challenge.tokensToWin).toBe(3);
+      await h.service.accept('B', challenge.id, cmd());
+      expect(h.matchCreation.createSecuredMatch).toHaveBeenLastCalledWith(
+        expect.objectContaining({ tokensToWin: 3 }),
+      );
+    });
 
     it('accepting creates exactly one new match linked to the previous one', async () => {
       finish();
@@ -427,7 +451,8 @@ describe('ChallengeService (real Redis Lua)', () => {
 
   describe('invite', () => {
     it('joining by code (any case/format) creates the match with the inviter', async () => {
-      const { challenge } = await h.service.createInvite('A', MODE, cmd());
+      const { challenge } = await h.service.createInvite('A', MODE, cmd(), 1);
+      expect(challenge.tokensToWin).toBe(1);
       expect(challenge.inviteCode).toMatch(/^[A-Z2-9]{10}$/);
 
       const typed = `${challenge.inviteCode!.slice(0, 5).toLowerCase()}-${challenge.inviteCode!.slice(5)}`;

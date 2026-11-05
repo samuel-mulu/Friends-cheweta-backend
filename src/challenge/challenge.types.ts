@@ -31,6 +31,8 @@ export type ChallengeRecord = {
   expiresAtMs: number;
   acceptingAtMs?: number;
   matchId?: string;
+  /** "First to N home" (1-4); absent = 4. Copied to the match on accept. */
+  tokensToWin?: number;
 };
 
 export type ChallengeView = ChallengeRecord & {

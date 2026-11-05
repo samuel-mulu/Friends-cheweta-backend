@@ -27,6 +27,8 @@ type CreateSecuredMatchInput = {
   matchmakingKey?: string;
   source: MatchSource;
   rematchOfMatchId?: string;
+  /** "First to N home" (1-4); default 4. */
+  tokensToWin?: number;
 };
 
 // Prisma's default interactive-transaction timeout is 5s. Match creation makes
@@ -110,6 +112,7 @@ export class MatchCreationService {
               status: MatchStatus.READY,
               entrySecuredAt: new Date(),
               rulesVersion: mode.rulesVersion,
+              tokensToWin: input.tokensToWin ?? 4,
               stakeAmountMinor: mode.stakeAmountMinor,
               platformFeeBps: mode.platformFeeBps,
               sessionCode: this.sessionCode(),

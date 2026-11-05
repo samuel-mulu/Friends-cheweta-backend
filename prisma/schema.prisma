@@ -226,6 +226,8 @@ model Match {
   gameModeId       String
   status           MatchStatus @default(CREATED)
   rulesVersion     String
+  /// "First to N home": tokens each player must bring home to finish (1-4).
+  tokensToWin      Int         @default(4)
   stakeAmountMinor BigInt
   platformFeeBps   Int
   sessionCode      String?     @unique

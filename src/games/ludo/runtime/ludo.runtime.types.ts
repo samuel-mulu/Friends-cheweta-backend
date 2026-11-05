@@ -38,6 +38,10 @@ export type LudoRuntimeEvent = {
   playerId?: string;
   diceValue?: number;
   tokenId?: string;
+  /**
+   * TOKEN_CAPTURED: the captured tokens. PLAYER_FINISHED / PLAYER_RESIGNED:
+   * the player's unfinished tokens sent back to the yard (player is out).
+   */
   tokenIds?: string[];
   winnerOrder?: string[];
   round?: number;

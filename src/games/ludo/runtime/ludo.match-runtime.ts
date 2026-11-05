@@ -9,6 +9,9 @@ import {
   LudoTurnPhase,
   assertValidLudoState,
   createInitialLudoState,
+  LudoMatchOptions,
+  LUDO_BASE_PROGRESS,
+  tokensToWinOf,
 } from '../domain';
 import { LudoEngine } from '../engine';
 import {
@@ -89,8 +92,9 @@ export class LudoMatchRuntime {
     private readonly dice: DiceProvider,
     private readonly engine = new LudoEngine(),
     rulesVersion: LudoRulesVersion = LUDO_CLASSIC_V1.version,
+    options: LudoMatchOptions = {},
   ) {
-    const game = createInitialLudoState(matchId, playerIds, rulesVersion);
+    const game = createInitialLudoState(matchId, playerIds, rulesVersion, options);
     this.state = {
       game,
       startingRoll: {
@@ -350,7 +354,12 @@ export class LudoMatchRuntime {
     const nowFinished = this.playerFinished(command.playerId);
     if (!beforeFinished && nowFinished && !next.winnerOrder.includes(command.playerId)) {
       next.winnerOrder.push(command.playerId);
-      events.push(this.event(LudoRuntimeEventType.PLAYER_FINISHED, { playerId: command.playerId }));
+      events.push(
+        this.event(LudoRuntimeEventType.PLAYER_FINISHED, {
+          playerId: command.playerId,
+          tokenIds: this.retireTokens(command.playerId),
+        }),
+      );
     }
 
     if (this.tryFinishMatch(events)) return events;
@@ -387,7 +396,10 @@ export class LudoMatchRuntime {
     game.version += 1;
     this.state.resignedPlayerIds.push(command.playerId);
     const events: LudoRuntimeEvent[] = [
-      this.event(LudoRuntimeEventType.PLAYER_RESIGNED, { playerId: command.playerId }),
+      this.event(LudoRuntimeEventType.PLAYER_RESIGNED, {
+        playerId: command.playerId,
+        tokenIds: this.retireTokens(command.playerId),
+      }),
     ];
 
     if (this.tryFinishMatch(events)) return events;
@@ -476,10 +488,31 @@ export class LudoMatchRuntime {
     return true;
   }
 
+  /**
+   * A player who is out (goal reached or resigned) takes their unfinished
+   * tokens off the track, back to the yard: a token that never moves again
+   * must not block or be captured by the players still racing. Returns the
+   * retired ids (sent as the event's `tokenIds` so clients mirror it).
+   */
+  private retireTokens(playerId: string): string[] {
+    const player = this.state.game.players.find((item) => item.userId === playerId);
+    if (!player) throw new Error('PLAYER_NOT_IN_MATCH');
+    const retired: string[] = [];
+    for (const token of player.tokens) {
+      if (token.state === LudoTokenState.FINISHED || token.state === LudoTokenState.BASE) continue;
+      token.state = LudoTokenState.BASE;
+      token.progress = LUDO_BASE_PROGRESS;
+      retired.push(token.id);
+    }
+    return retired;
+  }
+
+  /** Finished = this match's goal reached ("first to N home"; default all four). */
   private playerFinished(playerId: string): boolean {
     const player = this.state.game.players.find((item) => item.userId === playerId);
     if (!player) throw new Error('PLAYER_NOT_IN_MATCH');
-    return player.tokens.every((token) => token.state === LudoTokenState.FINISHED);
+    const home = player.tokens.filter((token) => token.state === LudoTokenState.FINISHED).length;
+    return home >= tokensToWinOf(this.state.game);
   }
 
   private event(

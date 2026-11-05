@@ -54,4 +54,10 @@ export type LudoGameState = {
   consecutiveSixes: number;
   legalTokenIds: string[];
   winnerOrder: string[];
+  /**
+   * Tokens a player must bring home to finish ("first to N home", 1-4).
+   * Absent on states created before the option existed: read it with
+   * `tokensToWinOf`, which treats absent as all four.
+   */
+  tokensToWin?: number;
 };

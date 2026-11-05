@@ -48,6 +48,7 @@ export class PracticeService {
     userId: string,
     level: PracticeLevel,
     commandId: string,
+    tokensToWin = 4,
   ): Promise<PracticeStartResult> {
     const commandKey = this.redis.key('practice', 'cmd', userId, commandId);
     const previous = await this.redis.getJson<PracticeStartResult>(commandKey);
@@ -104,7 +105,7 @@ export class PracticeService {
           });
         }
 
-        const match = await this.createMatch(userId, bot.id, mode);
+        const match = await this.createMatch(userId, bot.id, mode, tokensToWin);
         await this.timeouts.markJoined(match.id, bot.id);
         const result: PracticeStartResult = {
           matchId: match.id,
@@ -121,7 +122,12 @@ export class PracticeService {
     );
   }
 
-  private async createMatch(userId: string, botId: string, mode: { id: string; gameId: string }) {
+  private async createMatch(
+    userId: string,
+    botId: string,
+    mode: { id: string; gameId: string },
+    tokensToWin: number,
+  ) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         return await this.prisma.match.create({
@@ -130,6 +136,7 @@ export class PracticeService {
             gameModeId: mode.id,
             status: MatchStatus.READY,
             rulesVersion: PRACTICE_RULES_VERSION,
+            tokensToWin,
             stakeAmountMinor: 0n,
             platformFeeBps: 0,
             sessionCode: generateSessionCode(),

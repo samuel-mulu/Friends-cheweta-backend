@@ -190,7 +190,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   async createChallenge(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: ChallengeCreateDto): Promise<any> {
     try {
       const user = this.requireUser(socket);
-      const result = await this.challenge.create(user.id, dto.opponentUserId, dto.commandId);
+      const result = await this.challenge.create(user.id, dto.opponentUserId, dto.commandId, dto.tokensToWin);
       const challenge = result.challenge;
       for (const userId of [challenge.challengerId, challenge.opponentId]) {
         this.server.to(this.publisher.lobbyRoom(challenge.gameModeId)).emit(
@@ -255,7 +255,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   async createInvite(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: InviteCreateDto): Promise<any> {
     try {
       const user = this.requireUser(socket);
-      const { challenge, duplicate } = await this.challenge.createInvite(user.id, dto.gameModeId, dto.commandId);
+      const { challenge, duplicate } = await this.challenge.createInvite(user.id, dto.gameModeId, dto.commandId, dto.tokensToWin);
       if (!duplicate) this.publisher.publishUser(user.id, 'challenge:created', challenge);
       return { ok: true, commandId: dto.commandId, duplicate, data: challenge };
     } catch (error) {
@@ -331,7 +331,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   async startPractice(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: PracticeStartDto): Promise<any> {
     try {
       const user = this.requireUser(socket);
-      return { ok: true, commandId: dto.commandId, data: await this.practice.start(user.id, dto.level, dto.commandId) };
+      return { ok: true, commandId: dto.commandId, data: await this.practice.start(user.id, dto.level, dto.commandId, dto.tokensToWin) };
     } catch (error) {
       return this.errorAck(error);
     }

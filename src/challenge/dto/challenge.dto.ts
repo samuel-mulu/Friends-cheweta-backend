@@ -1,4 +1,4 @@
-import { IsString, IsUUID, Length } from 'class-validator';
+import { IsInt, IsOptional, IsString, IsUUID, Length, Max, Min } from 'class-validator';
 
 export class ChallengeCreateDto {
   @IsUUID()
@@ -6,6 +6,13 @@ export class ChallengeCreateDto {
 
   @IsString()
   opponentUserId!: string;
+
+  /** "First to N home" (1-4). Default 4 = classic. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(4)
+  tokensToWin?: number;
 }
 
 export class ChallengeCommandDto {
@@ -30,6 +37,13 @@ export class InviteCreateDto {
 
   @IsString()
   gameModeId!: string;
+
+  /** "First to N home" (1-4). Default 4 = classic. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(4)
+  tokensToWin?: number;
 }
 
 export class InviteJoinDto {
