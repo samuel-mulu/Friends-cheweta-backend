@@ -38,7 +38,7 @@ async function createHarness() {
     },
   };
   const history = {
-    persistExecution: jest.fn(async () => undefined),
+    persistExecution: jest.fn(async (_input: any): Promise<undefined> => undefined),
     saveCheckpoint: jest.fn(async () => undefined),
     getCheckpoint: jest.fn(async () => null),
   };
@@ -61,6 +61,8 @@ async function createHarness() {
     history,
     cleanup,
     slowDb: (ms: number) => (dbDelayMs = ms),
+    /** Database reads so far (match + participant lookups). */
+    calls: () => prisma.match.findUnique.mock.calls.length + prisma.matchParticipant.findUnique.mock.calls.length,
   };
 }
 
@@ -109,6 +111,7 @@ describe('LudoRuntimeService (real Redis)', () => {
     const result = await rollForStart('A', state.game.version);
     expect(result.duplicate).toBe(false);
     expect(result.events.length).toBeGreaterThan(0);
+    await h.service.flushPersistence(MATCH); // persistence runs after the reply
     expect(await h.redis.raw().sMembers(h.repository.postCommitRetryKey())).toEqual([MATCH]);
 
     await h.service.retryPostCommit();
@@ -136,5 +139,51 @@ describe('LudoRuntimeService (real Redis)', () => {
     expect(second.duplicate).toBe(true);
     expect(second.version).toBe(first.version);
     expect(h.history.persistExecution).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns the committed result before Postgres persistence finishes', async () => {
+    const state = await h.service.getSnapshot(MATCH, 'A');
+    let releaseDb!: () => void;
+    h.history.persistExecution.mockImplementationOnce(
+      () => new Promise<undefined>((resolve) => (releaseDb = () => resolve(undefined))),
+    );
+
+    const result = await rollForStart('A', state.game.version);
+    expect(result.events.length).toBeGreaterThan(0); // replied while the DB write is pending
+    releaseDb();
+    await h.service.flushPersistence(MATCH);
+    expect(h.history.persistExecution).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists rapid commands strictly in order', async () => {
+    const state = await h.service.getSnapshot(MATCH, 'A');
+    const order: number[] = [];
+    h.history.persistExecution.mockImplementation(async (input: any) => {
+      await sleep(input.state.game.version === 1 ? 30 : 0); // first write is slower
+      order.push(input.state.game.version);
+      return undefined;
+    });
+    const first = await rollForStart('A', state.game.version);
+    await rollForStart('B', first.version);
+    await h.service.flushPersistence(MATCH);
+    expect(order).toEqual([1, 2]);
+  });
+
+  it('does not read the database on the hot path once the match is playing', async () => {
+    const state = await h.service.getSnapshot(MATCH, 'A');
+    const a = await rollForStart('A', state.game.version);
+    await rollForStart('B', a.version);
+    await h.service.flushPersistence(MATCH);
+    const playing = (await h.service.getStoredSnapshot(MATCH))!;
+    if (playing.game.phase !== 'PLAYING') return; // starting-roll tie; covered elsewhere
+    const before = h.calls();
+    await h.service.execute({
+      matchId: MATCH,
+      type: 'ROLL_DICE',
+      playerId: playing.game.currentPlayerId!,
+      commandId: 'hot',
+      expectedVersion: playing.game.version,
+    });
+    expect(h.calls()).toBe(before);
   });
 });

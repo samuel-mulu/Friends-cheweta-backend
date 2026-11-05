@@ -338,6 +338,7 @@ export class TurnTimeoutService {
       };
       await this.redis.setJson(this.timingKey(matchId), timing, 86400);
       await this.redis.raw().zRem(this.turnQueueKey(), matchId);
+      this.turnSecondsByMatch.delete(matchId);
       return timing;
     }
 
@@ -358,7 +359,18 @@ export class TurnTimeoutService {
     return timing;
   }
 
+  /** A match's turn length never changes: look it up once per match. */
+  private readonly turnSecondsByMatch = new Map<string, number>();
+
   private async turnDurationSeconds(matchId: string): Promise<number> {
+    const cached = this.turnSecondsByMatch.get(matchId);
+    if (cached !== undefined) return cached;
+    const seconds = await this.lookupTurnSeconds(matchId);
+    this.turnSecondsByMatch.set(matchId, seconds);
+    return seconds;
+  }
+
+  private async lookupTurnSeconds(matchId: string): Promise<number> {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
       select: { gameMode: { select: { turnDurationSeconds: true } } },
@@ -382,10 +394,12 @@ export class TurnTimeoutService {
   }
 
   private async allParticipantsJoined(matchId: string): Promise<boolean> {
-    const [joined, participants] = await Promise.all([
+    // Player count from the live snapshot (Redis); the DB only if there is none yet.
+    const [joined, snapshot] = await Promise.all([
       this.redis.raw().sCard(this.joinedPlayersKey(matchId)),
-      this.prisma.matchParticipant.count({ where: { matchId } }),
+      this.runtime.getStoredSnapshot(matchId),
     ]);
+    const participants = snapshot?.game.players.length ?? (await this.prisma.matchParticipant.count({ where: { matchId } }));
     return participants > 0 && joined >= participants;
   }
 

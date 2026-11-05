@@ -16,7 +16,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { SettlementService } from '../settlement/settlement.service';
 import { LudoRuntimeRepository } from './ludo-runtime.repository';
+import { PerKeyQueue } from './match-persistence.queue';
 import { LudoMatchParticipantView, RuntimeExecution } from './realtime.types';
+
+/** Commands slower than this are logged (the hot path is Redis only). */
+const SLOW_COMMAND_MS = 250;
 
 /** Player commands wait this long for a concurrent command (e.g. a turn timeout) to finish. */
 const COMMAND_LOCK_WAIT_MS = 2000;
@@ -35,10 +39,12 @@ export class LudoRuntimeService {
   ) {}
 
   private readonly executedListeners = new Set<(state: LudoMatchRuntimeState) => void>();
+  private readonly persistence = new PerKeyQueue();
 
   async getSnapshot(matchId: string, userId: string): Promise<LudoMatchRuntimeState> {
-    await this.assertParticipant(matchId, userId);
+    if (!(await this.repository.getSnapshot(matchId))) await this.assertParticipant(matchId, userId);
     const state = await this.ensureSnapshot(matchId);
+    this.assertPlayer(state, userId);
     await this.repository.refreshSnapshotTtl(matchId);
     return state;
   }
@@ -94,7 +100,7 @@ export class LudoRuntimeService {
    */
   async execute(command: LudoRuntimeCommand & { matchId: string }): Promise<RuntimeExecution> {
     const { matchId, ...runtimeCommand } = command;
-    await this.assertParticipant(matchId, command.playerId);
+    const startedAt = Date.now();
 
     const execution = await this.redis.withLock(
       this.repository.lockKey(matchId),
@@ -114,6 +120,7 @@ export class LudoRuntimeService {
         }
 
         const state = await this.ensureSnapshot(matchId);
+        this.assertPlayer(state, command.playerId);
         const result = LudoMatchRuntime.restore(state, new CryptoDiceProvider()).execute(
           runtimeCommand,
         );
@@ -138,23 +145,7 @@ export class LudoRuntimeService {
     );
 
     if (!execution.duplicate) {
-      try {
-        await this.history.persistExecution({
-          matchId,
-          commandId: command.commandId,
-          state: execution.state,
-          events: execution.events,
-        });
-        await this.syncMatchStatus(execution.state);
-      } catch (error) {
-        this.logger.error(
-          `ludo_post_commit_failed match=${matchId} command=${command.commandId} reason=${(error as Error).message}`,
-        );
-        await this.redis
-          .raw()
-          .sAdd(this.repository.postCommitRetryKey(), matchId)
-          .catch(() => undefined);
-      }
+      // Redis already holds the authoritative result: notify now, persist later.
       for (const listener of this.executedListeners) {
         try {
           listener(execution.state);
@@ -162,8 +153,34 @@ export class LudoRuntimeService {
           this.logger.warn(`executed_listener_failed match=${matchId} reason=${(error as Error).message}`);
         }
       }
+      void this.persistence.enqueue(matchId, () => this.persistAfterCommit(matchId, command.commandId, execution));
     }
+    const elapsed = Date.now() - startedAt;
+    if (elapsed > SLOW_COMMAND_MS) this.logger.warn(`ludo_command_slow match=${matchId} type=${command.type} ms=${elapsed}`);
     return execution;
+  }
+
+  /** History + match status + settlement. Ordered per match; failures go to the retry set. */
+  private async persistAfterCommit(matchId: string, commandId: string, execution: RuntimeExecution): Promise<void> {
+    try {
+      await this.history.persistExecution({ matchId, commandId, state: execution.state, events: execution.events });
+      await this.syncMatchStatus(execution.state);
+    } catch (error) {
+      this.logger.error(`ludo_post_commit_failed match=${matchId} command=${commandId} reason=${(error as Error).message}`);
+      await this.redis
+        .raw()
+        .sAdd(this.repository.postCommitRetryKey(), matchId)
+        .catch(() => undefined);
+    }
+  }
+
+  /** Wait for queued persistence (tests, graceful shutdown). */
+  flushPersistence(matchId?: string): Promise<void> {
+    return this.persistence.flush(matchId);
+  }
+
+  async onApplicationShutdown(): Promise<void> {
+    await this.persistence.flush();
   }
 
   /** Maintenance: re-apply checkpoint + status/settlement for matches whose post-commit step failed. */
@@ -188,7 +205,9 @@ export class LudoRuntimeService {
   private async ensureSnapshot(matchId: string): Promise<LudoMatchRuntimeState> {
     const existing = await this.repository.getSnapshot(matchId);
     if (existing) {
-      await this.gameEntry.assertPlayable(matchId);
+      // Only a not-yet-started match can be cancelled (refund), so the DB
+      // check is needed only before the first move.
+      if (existing.game.phase === LudoMatchPhase.PRE_GAME) await this.gameEntry.assertPlayable(matchId);
       return existing;
     }
 
@@ -246,6 +265,12 @@ export class LudoRuntimeService {
     const state = await this.repository.saveSnapshotIfAbsent(matchId, initial);
     await this.history.saveCheckpoint(matchId, state);
     return state;
+  }
+
+  private assertPlayer(state: LudoMatchRuntimeState, userId: string): void {
+    if (!state.game.players.some((player) => player.userId === userId)) {
+      throw new ForbiddenException({ code: 'MATCH_ACCESS_DENIED', message: 'You are not part of this match.' });
+    }
   }
 
   private async assertParticipant(matchId: string, userId: string): Promise<void> {
