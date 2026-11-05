@@ -22,17 +22,35 @@ export function computePlayerMatchStats(input: {
   colorByUser: Record<string, string>;
   events: EventLike[];
 }): PlayerMatchStatRow[] {
-  const ownerByColor = new Map(Object.entries(input.colorByUser).map(([userId, color]) => [color, userId]));
+  const ownerByColor = new Map(
+    Object.entries(input.colorByUser).map(([userId, color]) => [color, userId]),
+  );
   const rows = new Map<string, PlayerMatchStatRow>(
     input.playerIds.map((userId) => {
       const index = input.winnerOrder.indexOf(userId);
       const position = index >= 0 ? index + 1 : input.playerIds.length;
-      return [userId, { userId, position, won: position === 1, rolls: 0, sixes: 0, captures: 0, tokensLost: 0, tokensHome: 0 }];
+      return [
+        userId,
+        {
+          userId,
+          position,
+          won: position === 1,
+          rolls: 0,
+          sixes: 0,
+          captures: 0,
+          tokensLost: 0,
+          tokensHome: 0,
+        },
+      ];
     }),
   );
 
   for (const event of input.events) {
-    const payload = (event.payload ?? {}) as { playerId?: string; diceValue?: number; tokenIds?: string[] };
+    const payload = (event.payload ?? {}) as {
+      playerId?: string;
+      diceValue?: number;
+      tokenIds?: string[];
+    };
     const actor = payload.playerId ? rows.get(payload.playerId) : undefined;
     switch (event.type) {
       case 'DICE_ROLLED':
@@ -70,7 +88,9 @@ export type PlayerStatsSummary = {
 };
 
 /** Pure: lifetime summary from a player's rows, oldest first. */
-export function summarizePlayerStats(rows: Array<Pick<PlayerMatchStatRow, 'won' | 'rolls' | 'sixes' | 'captures' | 'tokensHome'>>): PlayerStatsSummary {
+export function summarizePlayerStats(
+  rows: Array<Pick<PlayerMatchStatRow, 'won' | 'rolls' | 'sixes' | 'captures' | 'tokensHome'>>,
+): PlayerStatsSummary {
   let wins = 0;
   let run = 0;
   let bestStreak = 0;

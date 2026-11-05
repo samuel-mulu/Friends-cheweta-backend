@@ -33,8 +33,12 @@ export class StatsService {
       select: { type: true, payload: true },
       orderBy: { sequence: 'asc' },
     });
-    const players = ((match.checkpoint?.state as { game?: { players?: Array<{ userId: string; color: string }> } } | null)?.game
-      ?.players ?? []);
+    const players =
+      (
+        match.checkpoint?.state as {
+          game?: { players?: Array<{ userId: string; color: string }> };
+        } | null
+      )?.game?.players ?? [];
     const rows = computePlayerMatchStats({
       playerIds: match.participants.map((p) => p.userId),
       winnerOrder: Array.isArray(match.winnerOrder) ? (match.winnerOrder as string[]) : [],
@@ -63,13 +67,22 @@ export class StatsService {
     const where = period === 'week' ? { createdAt: { gte: new Date(Date.now() - WEEK_MS) } } : {};
     const [games, wins] = await Promise.all([
       this.prisma.playerMatchStat.groupBy({ by: ['userId'], where, _count: { _all: true } }),
-      this.prisma.playerMatchStat.groupBy({ by: ['userId'], where: { ...where, won: true }, _count: { _all: true } }),
+      this.prisma.playerMatchStat.groupBy({
+        by: ['userId'],
+        where: { ...where, won: true },
+        _count: { _all: true },
+      }),
     ]);
     const winsBy = new Map(wins.map((row) => [row.userId, row._count._all]));
     const ranked = games
       .map((row) => {
         const w = winsBy.get(row.userId) ?? 0;
-        return { userId: row.userId, games: row._count._all, wins: w, winRate: Math.round((w / row._count._all) * 1000) / 1000 };
+        return {
+          userId: row.userId,
+          games: row._count._all,
+          wins: w,
+          winRate: Math.round((w / row._count._all) * 1000) / 1000,
+        };
       })
       .sort((a, b) => b.wins - a.wins || b.winRate - a.winRate || b.games - a.games)
       .slice(0, LEADERBOARD_SIZE);
@@ -80,7 +93,11 @@ export class StatsService {
     const names = new Map(users.map((u) => [u.id, u.fullName]));
     return {
       period,
-      entries: ranked.map((row, index) => ({ rank: index + 1, displayName: names.get(row.userId) ?? 'Player', ...row })),
+      entries: ranked.map((row, index) => ({
+        rank: index + 1,
+        displayName: names.get(row.userId) ?? 'Player',
+        ...row,
+      })),
     };
   }
 
@@ -92,16 +109,26 @@ export class StatsService {
       include: { user: { select: { fullName: true } } },
     });
     if (rows.length === 0) {
-      const exists = await this.prisma.match.findUnique({ where: { id: matchId }, select: { id: true } });
-      if (!exists) throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
+      const exists = await this.prisma.match.findUnique({
+        where: { id: matchId },
+        select: { id: true },
+      });
+      if (!exists)
+        throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
       return { matchId, players: [] }; // not recorded yet (or practice)
     }
     if (requester.role !== UserRole.ADMIN && !rows.some((row) => row.userId === requester.id)) {
-      throw new ForbiddenException({ code: 'MATCH_ACCESS_DENIED', message: 'You are not part of this match.' });
+      throw new ForbiddenException({
+        code: 'MATCH_ACCESS_DENIED',
+        message: 'You are not part of this match.',
+      });
     }
     return {
       matchId,
-      players: rows.map(({ user, id: _id, matchId: _m, createdAt: _c, ...row }) => ({ ...row, displayName: user.fullName })),
+      players: rows.map(({ user, id: _id, matchId: _m, createdAt: _c, ...row }) => ({
+        ...row,
+        displayName: user.fullName,
+      })),
     };
   }
 }

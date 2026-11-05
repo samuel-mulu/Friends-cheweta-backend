@@ -35,15 +35,51 @@ class FakeDb {
       platformFeeBps: 500,
     });
     this.matchParticipants = [
-      { id: 'participant-1', matchId: 'match-1', userId: 'user-1', seat: 0, resultPosition: null, finishedAt: null },
-      { id: 'participant-2', matchId: 'match-1', userId: 'user-2', seat: 1, resultPosition: null, finishedAt: null },
+      {
+        id: 'participant-1',
+        matchId: 'match-1',
+        userId: 'user-1',
+        seat: 0,
+        resultPosition: null,
+        finishedAt: null,
+      },
+      {
+        id: 'participant-2',
+        matchId: 'match-1',
+        userId: 'user-2',
+        seat: 1,
+        resultPosition: null,
+        finishedAt: null,
+      },
     ];
     this.matchEntries = [
-      { id: 'entry-1', matchId: 'match-1', userId: 'user-1', amountMinor: 500n, status: MatchEntryStatus.LOCKED },
-      { id: 'entry-2', matchId: 'match-1', userId: 'user-2', amountMinor: 500n, status: MatchEntryStatus.LOCKED },
+      {
+        id: 'entry-1',
+        matchId: 'match-1',
+        userId: 'user-1',
+        amountMinor: 500n,
+        status: MatchEntryStatus.LOCKED,
+      },
+      {
+        id: 'entry-2',
+        matchId: 'match-1',
+        userId: 'user-2',
+        amountMinor: 500n,
+        status: MatchEntryStatus.LOCKED,
+      },
     ];
-    this.wallets.set('user-1', { id: 'wallet-user-1', userId: 'user-1', availableBalance: 0n, lockedBalance: 500n });
-    this.wallets.set('user-2', { id: 'wallet-user-2', userId: 'user-2', availableBalance: 0n, lockedBalance: 500n });
+    this.wallets.set('user-1', {
+      id: 'wallet-user-1',
+      userId: 'user-1',
+      availableBalance: 0n,
+      lockedBalance: 500n,
+    });
+    this.wallets.set('user-2', {
+      id: 'wallet-user-2',
+      userId: 'user-2',
+      availableBalance: 0n,
+      lockedBalance: 500n,
+    });
   }
 
   client(): any {
@@ -129,14 +165,22 @@ class FakeDb {
           store.count('wallet.updateMany');
           const wallet = [...store.wallets.values()].find((w) => w.id === where.id);
           if (!wallet) return { count: 0 };
-          if (where.availableBalance?.gte !== undefined && wallet.availableBalance < where.availableBalance.gte) {
+          if (
+            where.availableBalance?.gte !== undefined &&
+            wallet.availableBalance < where.availableBalance.gte
+          ) {
             return { count: 0 };
           }
-          if (where.lockedBalance?.gte !== undefined && wallet.lockedBalance < where.lockedBalance.gte) {
+          if (
+            where.lockedBalance?.gte !== undefined &&
+            wallet.lockedBalance < where.lockedBalance.gte
+          ) {
             return { count: 0 };
           }
-          if (data.availableBalance?.increment !== undefined) wallet.availableBalance += data.availableBalance.increment;
-          if (data.lockedBalance?.increment !== undefined) wallet.lockedBalance += data.lockedBalance.increment;
+          if (data.availableBalance?.increment !== undefined)
+            wallet.availableBalance += data.availableBalance.increment;
+          if (data.lockedBalance?.increment !== undefined)
+            wallet.lockedBalance += data.lockedBalance.increment;
           return { count: 1 };
         },
       },
@@ -152,7 +196,8 @@ class FakeDb {
           return row;
         },
       },
-      $transaction: async (fn: (tx: any) => Promise<unknown>, _options?: unknown) => fn(store.client()),
+      $transaction: async (fn: (tx: any) => Promise<unknown>, _options?: unknown) =>
+        fn(store.client()),
     };
   }
 }
@@ -163,7 +208,13 @@ function createService() {
   const wallet = new WalletService(prisma);
   const notifications = { create: jest.fn(async () => undefined) };
   const risk = { analyzeFinishedMatch: jest.fn(async () => undefined) };
-  const settlement = new SettlementService(prisma, wallet, notifications as any, risk as any, { recordMatch: jest.fn(async () => 0) } as any);
+  const settlement = new SettlementService(
+    prisma,
+    wallet,
+    notifications as any,
+    risk as any,
+    { recordMatch: jest.fn(async () => 0) } as any,
+  );
   return { settlement, store, notifications, risk };
 }
 
@@ -246,7 +297,8 @@ describe('SettlementService.settleMatchResult (DB3)', () => {
     // Give the detached background task a tick to run and swallow its error.
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(notifications.create).toHaveBeenCalled();
-    expect(risk.analyzeFinishedMatch).not.toHaveBeenCalled(); // short-circuited by the thrown error, but settlement itself is unaffected
+    // Follow-up steps are independent: a notification failure no longer skips risk analysis.
+    expect(risk.analyzeFinishedMatch).toHaveBeenCalledWith('match-1');
   });
 
   it('is idempotent: re-settling an already-settled match returns the same row without re-mutating wallets', async () => {
@@ -328,7 +380,9 @@ describe('SettlementService.reconcilePending (DB5 - retry/backoff)', () => {
     const { settlement, store } = createService();
     store.pendingFinishing = [{ id: 'match-1', winnerOrder: ['user-1', 'user-2'] }];
 
-    const settleSpy = jest.spyOn(settlement, 'settleMatchResult').mockRejectedValue(new Error('always fails'));
+    const settleSpy = jest
+      .spyOn(settlement, 'settleMatchResult')
+      .mockRejectedValue(new Error('always fails'));
 
     let now = 0;
     jest.spyOn(Date, 'now').mockImplementation(() => now);
@@ -359,7 +413,9 @@ describe('SettlementService.reconcilePending (DB5 - retry/backoff)', () => {
     store.seedStandardMatch();
     store.pendingFinishing = [{ id: 'match-1', winnerOrder: ['user-1', 'user-2'] }];
 
-    const settleSpy = jest.spyOn(settlement, 'settleMatchResult').mockRejectedValueOnce(new Error('boom'));
+    const settleSpy = jest
+      .spyOn(settlement, 'settleMatchResult')
+      .mockRejectedValueOnce(new Error('boom'));
     jest.spyOn(Date, 'now').mockImplementation(() => 0);
 
     await settlement.reconcilePending(); // fails once, schedules a backoff window for match-1

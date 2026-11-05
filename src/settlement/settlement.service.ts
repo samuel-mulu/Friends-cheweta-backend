@@ -34,14 +34,20 @@ export class SettlementService {
 
   settleLudoMatch(state: LudoMatchRuntimeState) {
     if (state.game.phase !== LudoMatchPhase.FINISHED || state.game.winnerOrder.length === 0) {
-      throw new ConflictException({ code: 'MATCH_RESULT_NOT_FINAL', message: 'Match result is not final.' });
+      throw new ConflictException({
+        code: 'MATCH_RESULT_NOT_FINAL',
+        message: 'Match result is not final.',
+      });
     }
     return this.settleMatchResult(state.game.matchId, state.game.winnerOrder);
   }
 
   async settleMatchResult(matchId: string, winnerOrder: string[]) {
     if (winnerOrder.length === 0 || new Set(winnerOrder).size !== winnerOrder.length) {
-      throw new ConflictException({ code: 'INVALID_WINNER_ORDER', message: 'Winner order is invalid.' });
+      throw new ConflictException({
+        code: 'INVALID_WINNER_ORDER',
+        message: 'Winner order is invalid.',
+      });
     }
     const winnerId = winnerOrder[0];
 
@@ -57,19 +63,38 @@ export class SettlementService {
           where: { id: matchId },
           include: { entries: true, participants: true },
         });
-        if (!match) throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
+        if (!match)
+          throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
         if (!match.entrySecuredAt) {
-          throw new ConflictException({ code: 'MATCH_ENTRY_NOT_SECURED', message: 'Cannot settle unsecured match entry.' });
+          throw new ConflictException({
+            code: 'MATCH_ENTRY_NOT_SECURED',
+            message: 'Cannot settle unsecured match entry.',
+          });
         }
         const participantIds = new Set(match.participants.map((p) => p.userId));
-        if (winnerOrder.length !== participantIds.size || winnerOrder.some((id) => !participantIds.has(id))) {
-          throw new ConflictException({ code: 'INVALID_MATCH_WINNER', message: 'Winner order must contain every participant exactly once.' });
+        if (
+          winnerOrder.length !== participantIds.size ||
+          winnerOrder.some((id) => !participantIds.has(id))
+        ) {
+          throw new ConflictException({
+            code: 'INVALID_MATCH_WINNER',
+            message: 'Winner order must contain every participant exactly once.',
+          });
         }
-        if (match.entries.length !== match.participants.length || match.entries.some((e) => e.status !== MatchEntryStatus.LOCKED)) {
-          throw new ConflictException({ code: 'MATCH_ENTRY_STATE_INVALID', message: 'Match entry funds are not in a settleable state.' });
+        if (
+          match.entries.length !== match.participants.length ||
+          match.entries.some((e) => e.status !== MatchEntryStatus.LOCKED)
+        ) {
+          throw new ConflictException({
+            code: 'MATCH_ENTRY_STATE_INVALID',
+            message: 'Match entry funds are not in a settleable state.',
+          });
         }
         if (match.platformFeeBps < 0 || match.platformFeeBps > 10_000) {
-          throw new ConflictException({ code: 'INVALID_PLATFORM_FEE', message: 'Platform fee basis points are invalid.' });
+          throw new ConflictException({
+            code: 'INVALID_PLATFORM_FEE',
+            message: 'Platform fee basis points are invalid.',
+          });
         }
 
         const claimed = await tx.match.updateMany({
@@ -79,7 +104,10 @@ export class SettlementService {
         if (claimed.count !== 1) {
           const duplicate = await tx.matchSettlement.findUnique({ where: { matchId } });
           if (duplicate) return this.serialize(duplicate);
-          throw new ConflictException({ code: 'MATCH_NOT_SETTLEABLE', message: 'Match is not in a settleable state.' });
+          throw new ConflictException({
+            code: 'MATCH_NOT_SETTLEABLE',
+            message: 'Match is not in a settleable state.',
+          });
         }
 
         let pot = 0n;
@@ -100,7 +128,11 @@ export class SettlementService {
 
         const fee = (pot * BigInt(match.platformFeeBps)) / 10_000n;
         const payout = pot - fee;
-        if (payout < 0n) throw new ConflictException({ code: 'INVALID_SETTLEMENT_AMOUNT', message: 'Calculated payout is invalid.' });
+        if (payout < 0n)
+          throw new ConflictException({
+            code: 'INVALID_SETTLEMENT_AMOUNT',
+            message: 'Calculated payout is invalid.',
+          });
 
         if (payout > 0n) {
           await this.wallet.creditAvailableInTransaction(tx, {
@@ -163,7 +195,9 @@ export class SettlementService {
       try {
         await run();
       } catch (error) {
-        this.logger.warn(`Post-settlement ${name} failed for ${matchId}: ${(error as Error).message}`);
+        this.logger.warn(
+          `Post-settlement ${name} failed for ${matchId}: ${(error as Error).message}`,
+        );
       }
     };
     await step('stats', () => this.stats.recordMatch(matchId));
@@ -173,7 +207,10 @@ export class SettlementService {
           userId,
           type: 'MATCH_RESULT',
           title: index === 0 ? 'You won the match' : 'Match finished',
-          message: index === 0 ? 'Your Ludo match was settled successfully.' : `You finished position ${index + 1}.`,
+          message:
+            index === 0
+              ? 'Your Ludo match was settled successfully.'
+              : `You finished position ${index + 1}.`,
           data: { matchId, position: index + 1 },
           dedupeKey: `match-result:${matchId}:${userId}`,
         });
@@ -181,7 +218,6 @@ export class SettlementService {
     });
     await step('risk', () => this.risk.analyzeFinishedMatch(matchId));
   }
-
 
   async getByMatchId(matchId: string) {
     const settlement = await this.prisma.matchSettlement.findUnique({ where: { matchId } });
@@ -225,7 +261,10 @@ export class SettlementService {
         if (winnerOrder.length > 0) await this.settleMatchResult(match.id, winnerOrder);
         this.retryState.delete(match.id);
       } catch (error) {
-        this.retryState.set(match.id, { lastAttemptAt: now, failureCount: (state?.failureCount ?? 0) + 1 });
+        this.retryState.set(match.id, {
+          lastAttemptAt: now,
+          failureCount: (state?.failureCount ?? 0) + 1,
+        });
         this.logger.warn(`Settlement retry failed for ${match.id}: ${(error as Error).message}`);
       }
     }
