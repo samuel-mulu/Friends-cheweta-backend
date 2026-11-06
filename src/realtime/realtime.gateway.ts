@@ -1,4 +1,4 @@
-import { ForbiddenException, HttpException, Logger, UsePipes, ValidationPipe } from '@nestjs/common';
+import { ForbiddenException, HttpException, Logger, UseFilters, UsePipes, ValidationPipe } from '@nestjs/common';
 import { UserRole } from '../generated/prisma/enums';
 import {
   ConnectedSocket,
@@ -50,9 +50,11 @@ import {
   RealtimeEnvelope,
   SnapshotAck,
 } from './realtime.types';
+import { WsAckExceptionFilter } from './ws-ack-exception.filter';
 
 @WebSocketGateway({ namespace: '/game' })
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
+@UseFilters(new WsAckExceptionFilter())
 export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(RealtimeGateway.name);
 
