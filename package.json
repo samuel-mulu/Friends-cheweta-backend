@@ -25,7 +25,9 @@
     "prebuild": "prisma generate",
     "simulate:ludo": "tsx src/games/ludo/simulation/cli.ts",
     "fuzz:ludo": "tsx src/games/ludo/simulation/fuzz.ts",
-    "bots:ludo": "tsx src/games/ludo/simulation/head-to-head.ts"
+    "bots:ludo": "tsx src/games/ludo/simulation/head-to-head.ts",
+    "fuzz:dama": "tsx src/games/dama/simulation/fuzz.ts",
+    "bots:dama": "tsx src/games/dama/simulation/head-to-head.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",
