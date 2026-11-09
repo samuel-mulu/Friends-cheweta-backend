@@ -115,7 +115,35 @@ async function main(): Promise<void> {
       });
     }
 
-    console.log(`Seeded admins ${seededPhones.join(', ')}, ${BOT_ACCOUNTS.length} practice bots and Ludo game catalog.`);
+    const dama = await prisma.game.upsert({
+      where: { code: 'DAMA' },
+      update: { name: 'Dama', enabled: true },
+      create: {
+        code: 'DAMA',
+        name: 'Dama',
+        description: 'Ethiopian Dama (ዳማ): flying kings, compulsory maximum capture.',
+      },
+    });
+    const damaModes = [
+      { code: 'DAMA_1V1_10', name: 'Dama 1v1 - 10 ETB', stakeAmountMinor: 1000n },
+      { code: 'DAMA_1V1_20', name: 'Dama 1v1 - 20 ETB', stakeAmountMinor: 2000n },
+      { code: 'DAMA_1V1_50', name: 'Dama 1v1 - 50 ETB', stakeAmountMinor: 5000n },
+    ];
+    for (const mode of damaModes) {
+      const data = {
+        gameId: dama.id,
+        name: mode.name,
+        playerCount: 2,
+        stakeAmountMinor: mode.stakeAmountMinor,
+        platformFeeBps: 0,
+        turnDurationSeconds: 40,
+        rulesVersion: 'DAMA_ET_V1',
+        enabled: true,
+      };
+      await prisma.gameMode.upsert({ where: { code: mode.code }, update: data, create: { code: mode.code, ...data } });
+    }
+
+    console.log(`Seeded admins ${seededPhones.join(', ')}, ${BOT_ACCOUNTS.length} practice bots, Ludo and Dama game catalog.`);
   } finally {
     await prisma.$disconnect();
   }

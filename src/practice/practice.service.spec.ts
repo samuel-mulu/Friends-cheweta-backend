@@ -68,7 +68,7 @@ describe('PracticeService', () => {
   });
 
   it('resumes an unfinished practice game instead of starting another', async () => {
-    h.setCommitted({ match: { id: 'old-practice', sessionCode: 'LD-OLD', source: 'PRACTICE' } });
+    h.setCommitted({ match: { id: 'old-practice', sessionCode: 'LD-OLD', source: 'PRACTICE', game: { code: 'LUDO' } } });
     expect(await h.service.start('human', 'HARD', cmd(3))).toMatchObject({
       matchId: 'old-practice',
       resumed: true,

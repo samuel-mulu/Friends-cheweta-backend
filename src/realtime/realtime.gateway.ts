@@ -1,4 +1,4 @@
-import { ForbiddenException, HttpException, Logger, UseFilters, UsePipes, ValidationPipe } from '@nestjs/common';
+import { ForbiddenException, Logger, UseFilters, UsePipes, ValidationPipe } from '@nestjs/common';
 import { UserRole } from '../generated/prisma/enums';
 import {
   ConnectedSocket,
@@ -51,6 +51,7 @@ import {
   SnapshotAck,
 } from './realtime.types';
 import { WsAckExceptionFilter } from './ws-ack-exception.filter';
+import { toErrorAck, toErrorPayload } from './ws-errors';
 
 @WebSocketGateway({ namespace: '/game' })
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
@@ -333,7 +334,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   async startPractice(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: PracticeStartDto): Promise<any> {
     try {
       const user = this.requireUser(socket);
-      return { ok: true, commandId: dto.commandId, data: await this.practice.start(user.id, dto.level, dto.commandId, dto.tokensToWin) };
+      return { ok: true, commandId: dto.commandId, data: await this.practice.start(user.id, dto.level, dto.commandId, dto.tokensToWin, dto.game) };
     } catch (error) {
       return this.errorAck(error);
     }
@@ -544,26 +545,10 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   }
 
   private errorAck(error: unknown): any {
-    const payload = this.errorPayload(error);
-    return { ok: false, code: payload.code, message: payload.message };
+    return toErrorAck(error);
   }
 
   private errorPayload(error: unknown): { code: string; message: string } {
-    if (error instanceof HttpException) {
-      const response = error.getResponse();
-      if (typeof response === 'object' && response !== null) {
-        const value = response as { code?: string; message?: string | string[] };
-        return {
-          code: value.code ?? 'REQUEST_FAILED',
-          message: Array.isArray(value.message) ? value.message.join(', ') : value.message ?? error.message,
-        };
-      }
-      return { code: 'REQUEST_FAILED', message: String(response) };
-    }
-    if (error instanceof Error) {
-      const knownCode = /^[A-Z0-9_]+$/.test(error.message) ? error.message : 'REALTIME_COMMAND_FAILED';
-      return { code: knownCode, message: knownCode === error.message ? error.message : 'Realtime command failed.' };
-    }
-    return { code: 'REALTIME_COMMAND_FAILED', message: 'Realtime command failed.' };
+    return toErrorPayload(error);
   }
 }

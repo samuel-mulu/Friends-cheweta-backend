@@ -38,6 +38,8 @@ describe('RealtimeMaintenanceService (DB5 - independent timers)', () => {
       { sweep: jest.fn(async () => []) } as any,
       { publishChallengeTransition: jest.fn() } as any,
       { retryPostCommit: jest.fn(async () => undefined) } as any,
+      { processDue: jest.fn(async () => undefined) } as any,
+      { retryPostCommit: jest.fn(async () => undefined) } as any,
     );
     return {
       service,
@@ -104,6 +106,8 @@ describe('RealtimeMaintenanceService (DB5 - independent timers)', () => {
       settlement as any,
       { sweep: jest.fn(async () => []) } as any,
       { publishChallengeTransition: jest.fn() } as any,
+      { retryPostCommit: jest.fn(async () => undefined) } as any,
+      { processDue: jest.fn(async () => undefined) } as any,
       { retryPostCommit: jest.fn(async () => undefined) } as any,
     );
     service.onModuleInit();

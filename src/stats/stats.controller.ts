@@ -15,8 +15,9 @@ export class StatsController {
   }
 
   @Get('leaderboard')
-  leaderboard(@Query('period') period?: string) {
-    return this.stats.leaderboard((period === 'week' ? 'week' : 'all') as LeaderboardPeriod);
+  leaderboard(@Query('period') period?: string, @Query('game') game?: string) {
+    const gameCode = game && /^[A-Z_]{2,20}$/.test(game.toUpperCase()) ? game.toUpperCase() : undefined;
+    return this.stats.leaderboard((period === 'week' ? 'week' : 'all') as LeaderboardPeriod, gameCode);
   }
 
   @Get('matches/:id')

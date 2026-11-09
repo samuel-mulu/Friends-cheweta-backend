@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Server } from 'socket.io';
 import { ChallengeTransition } from '../challenge/challenge.types';
+import type { DamaRuntimeEvent } from '../games/dama/runtime';
 import { RuntimeExecution, REALTIME_PROTOCOL_VERSION } from './realtime.types';
 
 export const LUDO_EVENT_NAMES: Record<string, string> = {
@@ -22,6 +23,13 @@ export const LUDO_EVENT_NAMES: Record<string, string> = {
   MATCH_FINISHED: 'match:finished',
 };
 
+export const DAMA_EVENT_NAMES: Record<string, string> = {
+  PIECE_MOVED: 'dama:piece_moved',
+  TURN_STARTED: 'dama:turn_started',
+  PLAYER_RESIGNED: 'dama:player_resigned',
+  MATCH_FINISHED: 'match:finished',
+};
+
 /** Admin dashboards receive a read-only copy of every authoritative match event. */
 export const ADMIN_OPERATIONS_ROOM = 'admin:operations';
 
@@ -34,6 +42,18 @@ export class RealtimePublisherService {
   }
 
   publishExecution(result: RuntimeExecution): void {
+    this.publishEvents(result, LUDO_EVENT_NAMES, 'ludo:event');
+  }
+
+  publishDamaExecution(result: { duplicate: boolean; events: DamaRuntimeEvent[] }): void {
+    this.publishEvents(result, DAMA_EVENT_NAMES, 'dama:event');
+  }
+
+  private publishEvents(
+    result: { duplicate: boolean; events: Array<{ type: string; matchId: string; version: number }> },
+    names: Record<string, string>,
+    fallback: string,
+  ): void {
     if (!this.server || result.duplicate) return;
     for (const event of result.events) {
       const envelope = {
@@ -46,7 +66,7 @@ export class RealtimePublisherService {
       };
       this.server
         .to(this.matchRoom(event.matchId))
-        .emit(LUDO_EVENT_NAMES[event.type] ?? 'ludo:event', envelope);
+        .emit(names[event.type] ?? fallback, envelope);
       this.server.to(ADMIN_OPERATIONS_ROOM).emit('admin:match_event', envelope);
     }
   }

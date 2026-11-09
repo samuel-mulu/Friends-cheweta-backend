@@ -17,11 +17,14 @@ import {
   PRACTICE_BOTS,
   PRACTICE_RULES_VERSION,
   PRACTICE_SOURCE,
+  PracticeGame,
   PracticeLevel,
 } from './practice.constants';
 
 export type PracticeStartResult = {
   matchId: string;
+  /** Which game screen to open (LUDO | DAMA). */
+  gameCode: string;
   sessionCode: string | null;
   level: PracticeLevel | null;
   resumed: boolean;
@@ -49,6 +52,7 @@ export class PracticeService {
     level: PracticeLevel,
     commandId: string,
     tokensToWin = 4,
+    game: PracticeGame = 'LUDO',
   ): Promise<PracticeStartResult> {
     const commandKey = this.redis.key('practice', 'cmd', userId, commandId);
     const previous = await this.redis.getJson<PracticeStartResult>(commandKey);
@@ -71,13 +75,14 @@ export class PracticeService {
 
         const committed = await this.prisma.matchParticipant.findFirst({
           where: { userId, match: { status: { in: COMMITTED_MATCH_STATUSES } } },
-          select: { match: { select: { id: true, sessionCode: true, source: true } } },
+          select: { match: { select: { id: true, sessionCode: true, source: true, game: { select: { code: true } } } } },
         });
         if (committed) {
           // Already in a practice game: go back to it instead of failing.
           if (committed.match.source === PRACTICE_SOURCE) {
             return {
               matchId: committed.match.id,
+              gameCode: committed.match.game.code,
               sessionCode: committed.match.sessionCode,
               level: null,
               resumed: true,
@@ -94,9 +99,9 @@ export class PracticeService {
           select: { id: true, isBot: true },
         });
         const mode = await this.prisma.gameMode.findFirst({
-          where: { enabled: true, playerCount: 2, game: { code: 'LUDO', enabled: true } },
+          where: { enabled: true, playerCount: 2, game: { code: game, enabled: true } },
           orderBy: { stakeAmountMinor: 'asc' },
-          select: { id: true, gameId: true },
+          select: { id: true, gameId: true, rulesVersion: true },
         });
         if (!bot?.isBot || !mode) {
           throw new ServiceUnavailableException({
@@ -105,16 +110,19 @@ export class PracticeService {
           });
         }
 
-        const match = await this.createMatch(userId, bot.id, mode, tokensToWin);
+        // Ludo practice always uses the current rules; Dama uses its mode's.
+        const rulesVersion = game === 'LUDO' ? PRACTICE_RULES_VERSION : mode.rulesVersion;
+        const match = await this.createMatch(userId, bot.id, mode, rulesVersion, tokensToWin);
         await this.timeouts.markJoined(match.id, bot.id);
         const result: PracticeStartResult = {
           matchId: match.id,
+          gameCode: game,
           sessionCode: match.sessionCode,
           level,
           resumed: false,
         };
         await this.redis.setJson(commandKey, result, COMMAND_TTL_SECONDS);
-        this.logger.log(`practice_started user=${userId} level=${level} match=${match.id}`);
+        this.logger.log(`practice_started user=${userId} game=${game} level=${level} match=${match.id}`);
         return result;
       },
       undefined,
@@ -126,6 +134,7 @@ export class PracticeService {
     userId: string,
     botId: string,
     mode: { id: string; gameId: string },
+    rulesVersion: string,
     tokensToWin: number,
   ) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -135,7 +144,7 @@ export class PracticeService {
             gameId: mode.gameId,
             gameModeId: mode.id,
             status: MatchStatus.READY,
-            rulesVersion: PRACTICE_RULES_VERSION,
+            rulesVersion,
             tokensToWin,
             stakeAmountMinor: 0n,
             platformFeeBps: 0,

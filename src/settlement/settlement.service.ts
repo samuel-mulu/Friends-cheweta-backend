@@ -185,11 +185,95 @@ export class SettlementService {
     // socket ordering is preserved by returning immediately here, while
     // follow-up work runs in the background and can never turn an
     // already-committed settlement into a reported failure.
-    if (runFollowUp) void this.runPostSettlementTasks(matchId, winnerOrder);
+    if (runFollowUp) void this.runPostSettlementTasks(matchId, winnerOrder, false);
     return settlement;
   }
 
-  private async runPostSettlementTasks(matchId: string, winnerOrder: string[]): Promise<void> {
+  /**
+   * A draw (Dama draw rule): both stakes are released back to the players, no
+   * fee, no winner. Idempotent and exactly-once like a win settlement.
+   */
+  async settleDraw(matchId: string) {
+    let followUpPlayers: string[] = [];
+    const settlement = await withFinancialTiming(this.logger, 'SETTLEMENT_DRAW', { matchId }, () =>
+      this.prisma.$transaction(async (tx) => {
+        const existing = await tx.matchSettlement.findUnique({ where: { matchId } });
+        if (existing) return this.serialize(existing);
+
+        const match = await tx.match.findUnique({
+          where: { id: matchId },
+          include: { entries: true, participants: true },
+        });
+        if (!match)
+          throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
+        if (
+          !match.entrySecuredAt ||
+          match.entries.length !== match.participants.length ||
+          match.entries.some((e) => e.status !== MatchEntryStatus.LOCKED)
+        ) {
+          throw new ConflictException({
+            code: 'MATCH_ENTRY_STATE_INVALID',
+            message: 'Match entry funds are not in a settleable state.',
+          });
+        }
+        const claimed = await tx.match.updateMany({
+          where: { id: match.id, status: { in: [MatchStatus.PLAYING, MatchStatus.FINISHING] } },
+          data: { status: MatchStatus.FINISHING },
+        });
+        if (claimed.count !== 1) {
+          throw new ConflictException({
+            code: 'MATCH_NOT_SETTLEABLE',
+            message: 'Match is not in a settleable state.',
+          });
+        }
+
+        let pot = 0n;
+        for (const entry of match.entries) {
+          pot += entry.amountMinor;
+          if (entry.amountMinor > 0n) {
+            await this.wallet.releaseFundsInTransaction(tx, {
+              userId: entry.userId,
+              amountMinor: entry.amountMinor,
+              type: WalletTransactionType.GAME_ENTRY_RELEASE,
+              idempotencyKey: `match-draw:${match.id}:${entry.userId}`,
+              referenceType: 'MATCH',
+              referenceId: match.id,
+              metadata: { reason: 'DRAW' },
+            });
+          }
+        }
+        await tx.matchParticipant.updateMany({
+          where: { matchId },
+          data: { resultPosition: 1, finishedAt: new Date() },
+        });
+        await tx.matchEntry.updateMany({
+          where: { matchId, status: MatchEntryStatus.LOCKED },
+          data: { status: MatchEntryStatus.REFUNDED, refundedAt: new Date() },
+        });
+        const settlement = await tx.matchSettlement.create({
+          data: {
+            matchId,
+            winnerUserId: null,
+            potAmountMinor: pot,
+            platformFeeMinor: 0n,
+            payoutAmountMinor: 0n,
+            winnerOrder: [],
+          },
+        });
+        await tx.match.update({
+          where: { id: matchId },
+          data: { status: MatchStatus.FINISHED, finishedAt: new Date(), winnerOrder: [], isDraw: true },
+        });
+        if (match.source !== 'PRACTICE') followUpPlayers = match.participants.map((p) => p.userId);
+        return this.serialize(settlement);
+      }, SETTLEMENT_TRANSACTION_OPTIONS),
+    );
+    if (followUpPlayers.length > 0) void this.runPostSettlementTasks(matchId, followUpPlayers, true);
+    return settlement;
+  }
+
+  /** `userIds`: winner order, or both players for a draw. */
+  private async runPostSettlementTasks(matchId: string, userIds: string[], draw: boolean): Promise<void> {
     // Independent steps: one failing never skips the others.
     const step = async (name: string, run: () => Promise<unknown>) => {
       try {
@@ -202,16 +286,23 @@ export class SettlementService {
     };
     await step('stats', () => this.stats.recordMatch(matchId));
     await step('notifications', async () => {
-      for (const [index, userId] of winnerOrder.entries()) {
+      const match = await this.prisma.match.findUnique({
+        where: { id: matchId },
+        select: { game: { select: { name: true } } },
+      });
+      const matchLabel = match?.game?.name ? `${match.game.name} match` : 'match';
+      for (const [index, userId] of userIds.entries()) {
+        const won = !draw && index === 0;
         await this.notifications.create({
           userId,
           type: 'MATCH_RESULT',
-          title: index === 0 ? 'You won the match' : 'Match finished',
-          message:
-            index === 0
-              ? 'Your Ludo match was settled successfully.'
+          title: draw ? 'Match drawn' : won ? 'You won the match' : 'Match finished',
+          message: draw
+            ? `Your ${matchLabel} ended in a draw. Your stake was returned.`
+            : won
+              ? `Your ${matchLabel} was settled successfully.`
               : `You finished position ${index + 1}.`,
-          data: { matchId, position: index + 1 },
+          data: { matchId, position: draw ? 1 : index + 1, draw },
           dedupeKey: `match-result:${matchId}:${userId}`,
         });
       }
@@ -242,7 +333,7 @@ export class SettlementService {
   async reconcilePending(): Promise<void> {
     const matches = await this.prisma.match.findMany({
       where: { status: MatchStatus.FINISHING, winnerOrder: { not: Prisma.JsonNull } },
-      select: { id: true, winnerOrder: true },
+      select: { id: true, winnerOrder: true, isDraw: true },
       take: 25,
       orderBy: { updatedAt: 'asc' },
     });
@@ -258,7 +349,8 @@ export class SettlementService {
         const winnerOrder = Array.isArray(match.winnerOrder)
           ? match.winnerOrder.filter((value): value is string => typeof value === 'string')
           : [];
-        if (winnerOrder.length > 0) await this.settleMatchResult(match.id, winnerOrder);
+        if (match.isDraw) await this.settleDraw(match.id);
+        else if (winnerOrder.length > 0) await this.settleMatchResult(match.id, winnerOrder);
         this.retryState.delete(match.id);
       } catch (error) {
         this.retryState.set(match.id, {
@@ -288,7 +380,7 @@ export class SettlementService {
   private serialize(row: {
     id: string;
     matchId: string;
-    winnerUserId: string;
+    winnerUserId: string | null;
     potAmountMinor: bigint;
     platformFeeMinor: bigint;
     payoutAmountMinor: bigint;

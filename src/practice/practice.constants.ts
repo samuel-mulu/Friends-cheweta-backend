@@ -7,6 +7,9 @@ export const PRACTICE_LEVELS: readonly PracticeLevel[] = ['EASY', 'NORMAL', 'HAR
 export const PRACTICE_SOURCE = 'PRACTICE';
 export const PRACTICE_RULES_VERSION = 'LUDO_CLASSIC_V2' as const;
 
+export type PracticeGame = 'LUDO' | 'DAMA';
+export const PRACTICE_GAMES: readonly PracticeGame[] = ['LUDO', 'DAMA'];
+
 /** One bot account per level (created by prisma/seed.ts). */
 export const PRACTICE_BOTS: Record<PracticeLevel, { fullName: string; phone: string }> = {
   EASY: { fullName: 'Bot Easy', phone: '0900000001' },

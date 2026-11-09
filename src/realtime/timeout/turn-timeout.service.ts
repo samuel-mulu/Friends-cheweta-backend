@@ -11,6 +11,9 @@ import { RedisService } from '../../redis/redis.service';
 import { LudoRuntimeService } from '../ludo-runtime.service';
 import { PresenceService } from '../presence.service';
 import { RealtimePublisherService } from '../realtime-publisher.service';
+import { DAMA_GAME_CODE } from '../dama/dama-runtime.service';
+import { DamaTurnTimerService } from '../dama/dama-turn-timer.service';
+import { MatchJoinTracker } from '../match-join-tracker';
 import { LudoTimingState } from './turn-timeout.types';
 
 @Injectable()
@@ -20,6 +23,7 @@ export class TurnTimeoutService {
   private readonly disconnectGraceSeconds: number;
   private readonly readyNoShowSeconds: number;
   private readonly prematchOrphanTimeoutSeconds: number;
+  private readonly joins: MatchJoinTracker;
 
   constructor(
     private readonly redis: RedisService,
@@ -29,7 +33,9 @@ export class TurnTimeoutService {
     private readonly publisher: RealtimePublisherService,
     private readonly gameEntry: GameEntryService,
     config: ConfigService<AppEnv, true>,
+    private readonly dama: DamaTurnTimerService,
   ) {
+    this.joins = new MatchJoinTracker(redis);
     this.maxConsecutiveTimeouts = config.get('LUDO_MAX_CONSECUTIVE_TIMEOUTS', { infer: true });
     this.disconnectGraceSeconds = config.get('LUDO_DISCONNECT_GRACE_SECONDS', { infer: true });
     this.readyNoShowSeconds = config.get('LUDO_READY_NO_SHOW_SECONDS', { infer: true });
@@ -42,9 +48,8 @@ export class TurnTimeoutService {
   }
 
   /** Records a participant as present (bots are marked at practice start). */
-  async markJoined(matchId: string, userId: string): Promise<void> {
-    const joinedKey = this.joinedPlayersKey(matchId);
-    await this.redis.raw().multi().sAdd(joinedKey, userId).expire(joinedKey, 86400).exec();
+  markJoined(matchId: string, userId: string): Promise<void> {
+    return this.joins.markJoined(matchId, userId);
   }
 
   async getTiming(matchId: string, state: LudoMatchRuntimeState): Promise<LudoTimingState> {
@@ -128,7 +133,7 @@ export class TurnTimeoutService {
 
         const participant = await this.prisma.matchParticipant.findFirst({
           where: { userId, match: { status: { in: [MatchStatus.READY, MatchStatus.PLAYING] } } },
-          include: { match: true },
+          include: { match: { include: { game: { select: { code: true } } } } },
           orderBy: { joinedAt: 'desc' },
         });
         if (!participant) {
@@ -138,6 +143,8 @@ export class TurnTimeoutService {
 
         if (participant.match.status === MatchStatus.READY) {
           await this.cancelBeforeStart(participant.matchId, 'PLAYER_DISCONNECTED_BEFORE_START', 'DISCONNECT_GRACE_EXPIRED');
+        } else if (participant.match.game.code === DAMA_GAME_CODE) {
+          await this.dama.forfeitAbsent(participant.matchId, userId);
         } else {
           const state = await this.runtime.getStoredSnapshot(participant.matchId);
           if (state?.game.phase === LudoMatchPhase.PLAYING && !state.resignedPlayerIds.includes(userId)) {
@@ -228,6 +235,7 @@ export class TurnTimeoutService {
     if (('skipped' in result && result.skipped) || !result.refunded) return false;
 
     await this.runtime.discardRuntime(matchId);
+    await this.dama.discard(matchId); // whichever game it was; deleting a missing key is a no-op
     const players = await this.prisma.matchParticipant.findMany({ where: { matchId }, select: { userId: true } });
     const cleanup = this.redis.raw().multi().zRem(this.turnQueueKey(), matchId).del(this.timingKey(matchId));
     await cleanup.exec();
@@ -396,15 +404,11 @@ export class TurnTimeoutService {
   private async allParticipantsJoined(matchId: string): Promise<boolean> {
     // Player count from the live snapshot (Redis); the DB only if there is none yet.
     const [joined, snapshot] = await Promise.all([
-      this.redis.raw().sCard(this.joinedPlayersKey(matchId)),
+      this.joins.joinedCount(matchId),
       this.runtime.getStoredSnapshot(matchId),
     ]);
     const participants = snapshot?.game.players.length ?? (await this.prisma.matchParticipant.count({ where: { matchId } }));
     return participants > 0 && joined >= participants;
-  }
-
-  private joinedPlayersKey(matchId: string): string {
-    return this.redis.key('runtime', 'ludo', matchId, 'joined-players');
   }
 
   private timingKey(matchId: string): string { return this.redis.key('runtime', 'ludo', matchId, 'timing'); }

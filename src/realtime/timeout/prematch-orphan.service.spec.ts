@@ -123,6 +123,7 @@ describe('prematch orphan lifecycle', () => {
     };
     const publisher = { publishUser: jest.fn() };
     const runtime = { discardRuntime: jest.fn(async () => undefined) };
+    const dama = { discard: jest.fn(async () => undefined) };
     const config = {
       get: jest.fn((key: string) => {
         if (key === 'PREMATCH_ORPHAN_TIMEOUT_SECONDS') return 600;
@@ -139,11 +140,13 @@ describe('prematch orphan lifecycle', () => {
       publisher as any,
       { cancelAndRefund } as any,
       config as any,
+      dama as any,
     );
 
     const cancelled = await service.processPrematchOrphans();
     expect(cancelled).toBe(1);
     expect(runtime.discardRuntime).toHaveBeenCalledWith('old-orphan');
+    expect(dama.discard).toHaveBeenCalledWith('old-orphan');
     expect(publisher.publishUser).toHaveBeenCalledWith('u1', 'match:cancelled', expect.objectContaining({ matchId: 'old-orphan' }), 'old-orphan');
     expect(cancelAndRefund).toHaveBeenCalledWith('old-orphan', 'PREMATCH_ORPHAN_TIMEOUT', {
       expectedStatuses: PREMATCH_ORPHAN_STATUSES,

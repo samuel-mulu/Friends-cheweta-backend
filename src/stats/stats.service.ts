@@ -1,7 +1,7 @@
 import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { MatchStatus, UserRole } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
-import { computePlayerMatchStats, summarizePlayerStats } from './stats.compute';
+import { computeDamaPlayerStats, computePlayerMatchStats, summarizePlayerStats } from './stats.compute';
 
 export type LeaderboardPeriod = 'week' | 'all';
 const LEADERBOARD_SIZE = 50;
@@ -22,29 +22,35 @@ export class StatsService {
         status: true,
         source: true,
         winnerOrder: true,
+        game: { select: { code: true } },
         participants: { select: { userId: true } },
         checkpoint: { select: { state: true } },
       },
     });
     if (!match || match.status !== MatchStatus.FINISHED || match.source === 'PRACTICE') return 0;
 
+    const dama = match.game?.code === 'DAMA';
     const events = await this.prisma.matchEvent.findMany({
-      where: { matchId, type: { in: ['DICE_ROLLED', 'TOKEN_CAPTURED', 'TOKEN_FINISHED'] } },
+      where: { matchId, type: { in: dama ? ['PIECE_MOVED'] : ['DICE_ROLLED', 'TOKEN_CAPTURED', 'TOKEN_FINISHED'] } },
       select: { type: true, payload: true },
       orderBy: { sequence: 'asc' },
     });
+    const playerIds = match.participants.map((p) => p.userId);
+    const winnerOrder = Array.isArray(match.winnerOrder) ? (match.winnerOrder as string[]) : [];
     const players =
       (
         match.checkpoint?.state as {
           game?: { players?: Array<{ userId: string; color: string }> };
         } | null
       )?.game?.players ?? [];
-    const rows = computePlayerMatchStats({
-      playerIds: match.participants.map((p) => p.userId),
-      winnerOrder: Array.isArray(match.winnerOrder) ? (match.winnerOrder as string[]) : [],
-      colorByUser: Object.fromEntries(players.map((p) => [p.userId, p.color])),
-      events,
-    });
+    const rows = dama
+      ? computeDamaPlayerStats({ playerIds, winnerOrder, events })
+      : computePlayerMatchStats({
+          playerIds,
+          winnerOrder,
+          colorByUser: Object.fromEntries(players.map((p) => [p.userId, p.color])),
+          events,
+        });
     const result = await this.prisma.playerMatchStat.createMany({
       data: rows.map((row) => ({ matchId, ...row })),
       skipDuplicates: true,
@@ -62,9 +68,15 @@ export class StatsService {
     return summarizePlayerStats(rows);
   }
 
-  /** Top players by wins (tie-break: win rate, then games). 'week' = last 7 days. */
-  async leaderboard(period: LeaderboardPeriod) {
-    const where = period === 'week' ? { createdAt: { gte: new Date(Date.now() - WEEK_MS) } } : {};
+  /**
+   * Top players by wins (tie-break: win rate, then games). 'week' = last 7
+   * days; `gameCode` limits it to one game (all games when absent).
+   */
+  async leaderboard(period: LeaderboardPeriod, gameCode?: string) {
+    const where = {
+      ...(period === 'week' ? { createdAt: { gte: new Date(Date.now() - WEEK_MS) } } : {}),
+      ...(gameCode ? { match: { game: { code: gameCode } } } : {}),
+    };
     const [games, wins] = await Promise.all([
       this.prisma.playerMatchStat.groupBy({ by: ['userId'], where, _count: { _all: true } }),
       this.prisma.playerMatchStat.groupBy({
@@ -93,6 +105,7 @@ export class StatsService {
     const names = new Map(users.map((u) => [u.id, u.fullName]));
     return {
       period,
+      game: gameCode ?? null,
       entries: ranked.map((row, index) => ({
         rank: index + 1,
         displayName: names.get(row.userId) ?? 'Player',

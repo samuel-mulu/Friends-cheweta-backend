@@ -16,6 +16,9 @@ import {
 } from '../generated/prisma/enums';
 import { withFinancialTiming } from '../common/utils/financial-instrumentation.util';
 import { PrismaService } from '../prisma/prisma.service';
+
+/** Games with a live runtime (both 1v1). */
+const SUPPORTED_GAME_CODES = ['LUDO', 'DAMA'];
 import { WalletService } from '../wallet/wallet.service';
 
 export type MatchSource = 'CHALLENGE' | 'REMATCH' | 'INVITE';
@@ -86,10 +89,10 @@ export class MatchCreationService {
               message: 'Game mode is not available.',
             });
           }
-          if (mode.game.code !== 'LUDO' || mode.playerCount !== 2) {
+          if (!SUPPORTED_GAME_CODES.includes(mode.game.code) || mode.playerCount !== 2) {
             throw new ConflictException({
               code: 'MATCH_CREATION_MODE_NOT_SUPPORTED',
-              message: 'Only Ludo 1v1 modes are supported.',
+              message: 'Only Ludo and Dama 1v1 modes are supported.',
             });
           }
           if (new Set(input.playerIds).size !== 2) {

@@ -6,8 +6,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { LudoRuntimeService } from '../realtime/ludo-runtime.service';
 import { RealtimePublisherService } from '../realtime/realtime-publisher.service';
 import { TurnTimeoutService } from '../realtime/timeout/turn-timeout.service';
-import { normalizeEthiopianPhone } from '../common/utils/phone.util';
-import { PRACTICE_BOTS, PracticeLevel, practiceBot } from './practice.constants';
+import { BotLevelCache } from './bot-levels';
+import { PracticeLevel, practiceBot } from './practice.constants';
 
 export type BotAction = {
   playerId: string;
@@ -58,19 +58,20 @@ export function decideBotAction(
 export class BotDriverService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BotDriverService.name);
   private readonly timers = new Map<string, NodeJS.Timeout>();
-  /** userId -> level for bots, null for people (cached; bots are fixed accounts). */
-  private readonly known = new Map<string, PracticeLevel | null>();
+  private readonly bots: BotLevelCache;
   private unsubscribe?: () => void;
 
   /** Pause before a bot acts, so people can follow (and animations finish). */
   static delays = { ROLL_FOR_START: 700, ROLL_DICE: 900, MOVE_TOKEN: 1000 };
 
   constructor(
-    private readonly prisma: PrismaService,
+    prisma: PrismaService,
     private readonly runtime: LudoRuntimeService,
     private readonly publisher: RealtimePublisherService,
     private readonly timeouts: TurnTimeoutService,
-  ) {}
+  ) {
+    this.bots = new BotLevelCache(prisma);
+  }
 
   onModuleInit(): void {
     this.unsubscribe = this.runtime.onExecuted((state) => void this.consider(state));
@@ -121,29 +122,7 @@ export class BotDriverService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async botLevels(state: LudoMatchRuntimeState): Promise<Map<string, PracticeLevel>> {
-    const ids = state.game.players.map((player) => player.userId);
-    const unknown = ids.filter((id) => !this.known.has(id));
-    if (unknown.length > 0) {
-      const users = await this.prisma.user.findMany({
-        where: { id: { in: unknown } },
-        select: { id: true, isBot: true, phoneNumber: true },
-      });
-      const levelByPhone = new Map(
-        (Object.entries(PRACTICE_BOTS) as Array<[PracticeLevel, { phone: string }]>).map(
-          ([level, bot]) => [normalizeEthiopianPhone(bot.phone), level],
-        ),
-      );
-      for (const id of unknown) {
-        const user = users.find((u) => u.id === id);
-        this.known.set(id, user?.isBot ? (levelByPhone.get(user.phoneNumber) ?? 'NORMAL') : null);
-      }
-    }
-    const levels = new Map<string, PracticeLevel>();
-    for (const id of ids) {
-      const level = this.known.get(id);
-      if (level) levels.set(id, level);
-    }
-    return levels;
+  private botLevels(state: LudoMatchRuntimeState): Promise<Map<string, PracticeLevel>> {
+    return this.bots.levels(state.game.players.map((player) => player.userId));
   }
 }

@@ -74,6 +74,36 @@ export function computePlayerMatchStats(input: {
   return [...rows.values()];
 }
 
+/**
+ * Dama: wins and captures from PIECE_MOVED events (`tokensLost` = pieces lost;
+ * rolls, sixes and tokensHome do not apply). A draw ranks both players 1st
+ * without a win.
+ */
+export function computeDamaPlayerStats(input: {
+  playerIds: string[];
+  winnerOrder: string[];
+  events: EventLike[];
+}): PlayerMatchStatRow[] {
+  const draw = input.winnerOrder.length === 0;
+  const rows = new Map<string, PlayerMatchStatRow>(
+    input.playerIds.map((userId) => {
+      const position = draw ? 1 : input.winnerOrder.indexOf(userId) + 1 || input.playerIds.length;
+      const row = { userId, position, won: !draw && position === 1, rolls: 0, sixes: 0, captures: 0, tokensLost: 0, tokensHome: 0 };
+      return [userId, row];
+    }),
+  );
+  for (const event of input.events) {
+    if (event.type !== 'PIECE_MOVED') continue;
+    const payload = (event.payload ?? {}) as { playerId?: string; move?: { captured?: number[] } };
+    const taken = payload.move?.captured?.length ?? 0;
+    const actor = payload.playerId ? rows.get(payload.playerId) : undefined;
+    if (!actor || taken === 0) continue;
+    actor.captures += taken;
+    for (const row of rows.values()) if (row !== actor) row.tokensLost += taken;
+  }
+  return [...rows.values()];
+}
+
 export type PlayerStatsSummary = {
   games: number;
   wins: number;

@@ -1,8 +1,12 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
 import { UserRole } from '../generated/prisma/enums';
-import { LudoMatchRuntimeState, LudoRuntimeEvent } from '../games/ludo/runtime';
+import { LudoMatchRuntimeState } from '../games/ludo/runtime';
 import { PrismaService } from '../prisma/prisma.service';
+
+/** Any game's runtime state: history only needs the authoritative version. */
+export type VersionedState = { game: { version: number } };
+export type RecordedEvent = { type: string; version: number };
 
 @Injectable()
 export class MatchHistoryService {
@@ -11,8 +15,8 @@ export class MatchHistoryService {
   async persistExecution(input: {
     matchId: string;
     commandId: string;
-    state: LudoMatchRuntimeState;
-    events: LudoRuntimeEvent[];
+    state: VersionedState;
+    events: RecordedEvent[];
   }): Promise<void> {
     const stateJson = this.toJson(input.state);
     await this.prisma.$transaction(async (tx) => {
@@ -44,7 +48,7 @@ export class MatchHistoryService {
   }
 
   /** Persist the latest snapshot only (used by post-commit retries). */
-  async saveCheckpoint(matchId: string, state: LudoMatchRuntimeState): Promise<void> {
+  async saveCheckpoint(matchId: string, state: VersionedState): Promise<void> {
     await this.writeCheckpoint(this.prisma, matchId, state.game.version, this.toJson(state));
   }
 
@@ -64,9 +68,9 @@ export class MatchHistoryService {
     }
   }
 
-  async getCheckpoint(matchId: string): Promise<LudoMatchRuntimeState | null> {
+  async getCheckpoint<TState = LudoMatchRuntimeState>(matchId: string): Promise<TState | null> {
     const row = await this.prisma.matchCheckpoint.findUnique({ where: { matchId } });
-    return row ? (row.state as unknown as LudoMatchRuntimeState) : null;
+    return row ? (row.state as unknown as TState) : null;
   }
 
   async listMine(userId: string, limit = 20, cursor?: string) {

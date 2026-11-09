@@ -228,6 +228,8 @@ model Match {
   rulesVersion     String
   /// "First to N home": tokens each player must bring home to finish (1-4).
   tokensToWin      Int         @default(4)
+  /// Finished without a winner (Dama draw rule); stakes are returned.
+  isDraw           Boolean     @default(false)
   stakeAmountMinor BigInt
   platformFeeBps   Int
   sessionCode      String?     @unique
@@ -299,7 +301,8 @@ model MatchEntry {
 model MatchSettlement {
   id             String   @id @default(uuid())
   matchId        String   @unique
-  winnerUserId   String
+  /// Null for a draw.
+  winnerUserId   String?
   potAmountMinor BigInt
   platformFeeMinor BigInt
   payoutAmountMinor BigInt
