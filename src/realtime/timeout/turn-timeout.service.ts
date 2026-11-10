@@ -13,6 +13,7 @@ import { PresenceService } from '../presence.service';
 import { RealtimePublisherService } from '../realtime-publisher.service';
 import { DAMA_GAME_CODE } from '../dama/dama-runtime.service';
 import { DamaTurnTimerService } from '../dama/dama-turn-timer.service';
+import { KARTA_GAME_CODE, KartaTurnTimerService } from '../karta/karta.game';
 import { MatchJoinTracker } from '../match-join-tracker';
 import { LudoTimingState } from './turn-timeout.types';
 
@@ -34,6 +35,7 @@ export class TurnTimeoutService {
     private readonly gameEntry: GameEntryService,
     config: ConfigService<AppEnv, true>,
     private readonly dama: DamaTurnTimerService,
+    private readonly karta: KartaTurnTimerService,
   ) {
     this.joins = new MatchJoinTracker(redis);
     this.maxConsecutiveTimeouts = config.get('LUDO_MAX_CONSECUTIVE_TIMEOUTS', { infer: true });
@@ -145,6 +147,8 @@ export class TurnTimeoutService {
           await this.cancelBeforeStart(participant.matchId, 'PLAYER_DISCONNECTED_BEFORE_START', 'DISCONNECT_GRACE_EXPIRED');
         } else if (participant.match.game.code === DAMA_GAME_CODE) {
           await this.dama.forfeitAbsent(participant.matchId, userId);
+        } else if (participant.match.game.code === KARTA_GAME_CODE) {
+          await this.karta.forfeitAbsent(participant.matchId, userId);
         } else {
           const state = await this.runtime.getStoredSnapshot(participant.matchId);
           if (state?.game.phase === LudoMatchPhase.PLAYING && !state.resignedPlayerIds.includes(userId)) {
@@ -235,7 +239,9 @@ export class TurnTimeoutService {
     if (('skipped' in result && result.skipped) || !result.refunded) return false;
 
     await this.runtime.discardRuntime(matchId);
-    await this.dama.discard(matchId); // whichever game it was; deleting a missing key is a no-op
+    // Whichever game it was; deleting a missing key is a no-op.
+    await this.dama.discard(matchId);
+    await this.karta.discard(matchId);
     const players = await this.prisma.matchParticipant.findMany({ where: { matchId }, select: { userId: true } });
     const cleanup = this.redis.raw().multi().zRem(this.turnQueueKey(), matchId).del(this.timingKey(matchId));
     await cleanup.exec();

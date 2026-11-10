@@ -5,6 +5,7 @@ import { LudoRuntimeService } from '../ludo-runtime.service';
 import { RealtimePublisherService } from '../realtime-publisher.service';
 import { DamaRuntimeService } from '../dama/dama-runtime.service';
 import { DamaTurnTimerService } from '../dama/dama-turn-timer.service';
+import { KartaRuntimeService, KartaTurnTimerService } from '../karta/karta.game';
 import { TurnTimeoutService } from './turn-timeout.service';
 
 // DB5: gameplay maintenance (turn timeouts, disconnect grace, ready
@@ -32,6 +33,8 @@ export class RealtimeMaintenanceService implements OnModuleInit, OnApplicationSh
     private readonly runtime: LudoRuntimeService,
     private readonly damaTimer: DamaTurnTimerService,
     private readonly damaRuntime: DamaRuntimeService,
+    private readonly kartaTimer: KartaTurnTimerService,
+    private readonly kartaRuntime: KartaRuntimeService,
   ) {}
 
   onModuleInit(): void {
@@ -58,11 +61,13 @@ export class RealtimeMaintenanceService implements OnModuleInit, OnApplicationSh
       for (const transition of transitions) this.publisher.publishChallengeTransition(transition);
       await this.timeouts.processDueTurnTimeouts();
       await this.damaTimer.processDue();
+      await this.kartaTimer.processDue();
       await this.timeouts.processDueDisconnects();
       await this.timeouts.processReadyNoShows();
       await this.timeouts.processPrematchOrphans();
       await this.runtime.retryPostCommit();
       await this.damaRuntime.retryPostCommit();
+      await this.kartaRuntime.retryPostCommit();
     } catch (error) {
       this.logger.warn(`Gameplay maintenance tick failed: ${(error as Error).message}`);
     } finally {

@@ -82,7 +82,7 @@ export class DamaBotDriverService implements OnModuleInit, OnModuleDestroy {
         path: decision.move.path,
       });
       this.publisher.publishDamaExecution(result);
-      await this.timer.afterMove(result.state, decision.playerId);
+      await this.timer.afterCommand(result.state, decision.playerId);
     } catch (error) {
       // Usually a race with the player's resign or a timeout; the next command brings the bot back.
       this.logger.warn(`dama_bot_failed match=${matchId} reason=${(error as Error).message}`);

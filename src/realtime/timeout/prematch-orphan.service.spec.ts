@@ -141,6 +141,7 @@ describe('prematch orphan lifecycle', () => {
       { cancelAndRefund } as any,
       config as any,
       dama as any,
+      dama as any, // Karta's timer has the same discard()
     );
 
     const cancelled = await service.processPrematchOrphans();

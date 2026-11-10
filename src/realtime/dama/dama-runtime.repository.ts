@@ -16,12 +16,4 @@ export class DamaRuntimeRepository extends RuntimeStore<DamaMatchRuntimeState, D
       config.get('REDIS_COMMAND_TTL_SECONDS', { infer: true }),
     );
   }
-
-  timingKey(matchId: string): string {
-    return this.redis.key('runtime', 'dama', matchId, 'timing');
-  }
-
-  turnQueueKey(): string {
-    return this.redis.key('runtime', 'dama', 'turn-deadlines');
-  }
 }

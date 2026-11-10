@@ -11,6 +11,8 @@ import { DamaRuntimeRepository } from './dama/dama-runtime.repository';
 import { DamaRuntimeService } from './dama/dama-runtime.service';
 import { DamaTurnTimerService } from './dama/dama-turn-timer.service';
 import { DamaGateway } from './dama/dama.gateway';
+import { KartaRuntimeRepository, KartaRuntimeService, KartaTurnTimerService } from './karta/karta.game';
+import { KartaGateway } from './karta/karta.gateway';
 import { PracticeService } from '../practice/practice.service';
 import { LudoRuntimeRepository } from './ludo-runtime.repository';
 import { LudoRuntimeService } from './ludo-runtime.service';
@@ -39,6 +41,10 @@ import { TurnTimeoutService } from './timeout/turn-timeout.service';
     DamaTurnTimerService,
     DamaBotDriverService,
     DamaGateway,
+    KartaRuntimeRepository,
+    KartaRuntimeService,
+    KartaTurnTimerService,
+    KartaGateway,
   ],
   exports: [LudoRuntimeService, TurnTimeoutService],
 })

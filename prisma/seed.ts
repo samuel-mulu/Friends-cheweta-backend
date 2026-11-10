@@ -143,7 +143,35 @@ async function main(): Promise<void> {
       await prisma.gameMode.upsert({ where: { code: mode.code }, update: data, create: { code: mode.code, ...data } });
     }
 
-    console.log(`Seeded admins ${seededPhones.join(', ')}, ${BOT_ACCOUNTS.length} practice bots, Ludo and Dama game catalog.`);
+    const karta = await prisma.game.upsert({
+      where: { code: 'KARTA' },
+      update: { name: 'Karta Lat Lat', enabled: true },
+      create: {
+        code: 'KARTA',
+        name: 'Karta Lat Lat',
+        description: 'ካርታ ላጥ ላጥ: call a rank, turn the cards; whoever gets it wins the round. First to 3.',
+      },
+    });
+    const kartaModes = [
+      { code: 'KARTA_1V1_10', name: 'Karta Lat Lat 1v1 - 10 ETB', stakeAmountMinor: 1000n },
+      { code: 'KARTA_1V1_20', name: 'Karta Lat Lat 1v1 - 20 ETB', stakeAmountMinor: 2000n },
+      { code: 'KARTA_1V1_50', name: 'Karta Lat Lat 1v1 - 50 ETB', stakeAmountMinor: 5000n },
+    ];
+    for (const mode of kartaModes) {
+      const data = {
+        gameId: karta.id,
+        name: mode.name,
+        playerCount: 2,
+        stakeAmountMinor: mode.stakeAmountMinor,
+        platformFeeBps: 0,
+        turnDurationSeconds: 15,
+        rulesVersion: 'KARTA_LATLAT_V1',
+        enabled: true,
+      };
+      await prisma.gameMode.upsert({ where: { code: mode.code }, update: data, create: { code: mode.code, ...data } });
+    }
+
+    console.log(`Seeded admins ${seededPhones.join(', ')}, ${BOT_ACCOUNTS.length} practice bots, Ludo, Dama and Karta game catalog.`);
   } finally {
     await prisma.$disconnect();
   }

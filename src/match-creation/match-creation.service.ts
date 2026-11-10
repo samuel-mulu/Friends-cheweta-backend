@@ -17,8 +17,8 @@ import {
 import { withFinancialTiming } from '../common/utils/financial-instrumentation.util';
 import { PrismaService } from '../prisma/prisma.service';
 
-/** Games with a live runtime (both 1v1). */
-const SUPPORTED_GAME_CODES = ['LUDO', 'DAMA'];
+/** Games with a live runtime (all 1v1). */
+const SUPPORTED_GAME_CODES = ['LUDO', 'DAMA', 'KARTA'];
 import { WalletService } from '../wallet/wallet.service';
 
 export type MatchSource = 'CHALLENGE' | 'REMATCH' | 'INVITE';
@@ -92,7 +92,7 @@ export class MatchCreationService {
           if (!SUPPORTED_GAME_CODES.includes(mode.game.code) || mode.playerCount !== 2) {
             throw new ConflictException({
               code: 'MATCH_CREATION_MODE_NOT_SUPPORTED',
-              message: 'Only Ludo and Dama 1v1 modes are supported.',
+              message: 'Only 1v1 modes of the live games are supported.',
             });
           }
           if (new Set(input.playerIds).size !== 2) {

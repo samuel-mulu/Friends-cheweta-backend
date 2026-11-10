@@ -49,6 +49,14 @@ export class RealtimePublisherService {
     this.publishEvents(result, DAMA_EVENT_NAMES, 'dama:event');
   }
 
+  /** Any turn game: events go out under the definition's socket names. */
+  publishTurnGame(
+    result: { duplicate: boolean; events: Array<{ type: string; matchId: string; version: number }> },
+    definition: { key: string; eventNames: Record<string, string> },
+  ): void {
+    this.publishEvents(result, definition.eventNames, `${definition.key}:event`);
+  }
+
   private publishEvents(
     result: { duplicate: boolean; events: Array<{ type: string; matchId: string; version: number }> },
     names: Record<string, string>,
