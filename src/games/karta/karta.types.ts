@@ -1,13 +1,16 @@
 /**
  * ካርታ ላጥ ላጥ — Karta Lat Lat, rules version KARTA_LATLAT_V1.
  *
- * 1v1, one standard 52-card deck (no jokers). Each round the server shuffles
- * and publishes a commitment (SHA-256 of the secret seed) *before* the call.
- * The caller names a rank (suits do not matter). Cards are then turned one
- * at a time, alternately, starting with the other player; whoever receives
- * the first card of the called rank wins the round. The caller alternates
- * each round; first to [KARTA_TARGET_SCORE] rounds wins the match. After each
- * round the seed is revealed so anyone can re-derive the deck and verify it.
+ * 1v1, one standard 52-card deck (no jokers). Each round has a starter (the
+ * dealer) and a chooser (the other player). The server shuffles and
+ * publishes a commitment (SHA-256 of the secret seed) *before* the call. The
+ * chooser names a rank (suits do not matter); then only the starter acts,
+ * turning ("lat") the cards one by one: the first to the chooser ("for
+ * away"), the next to themselves ("for me"), and so on. Whoever receives the
+ * first card of the called rank wins the round and starts the next one; the
+ * loser chooses. Round 1's starter is drawn at random. First to
+ * [KARTA_TARGET_SCORE] rounds wins the match. After each round the seed is
+ * revealed so anyone can re-derive the deck and verify it.
  */
 export const KARTA_V1 = 'KARTA_LATLAT_V1' as const;
 export type KartaRulesVersion = typeof KARTA_V1;
@@ -46,11 +49,16 @@ export type KartaGameState = {
   targetScore: number;
   scores: Record<string, number>;
   round: number;
+  /** Deals (turns every card) this round; the previous round's winner. */
+  starterId: string;
+  /** Names the rank this round (the other player). */
   callerId: string;
   calledRank: KartaRank | null;
   roundPhase: KartaRoundPhase;
-  /** CALLING: the caller; FLIPPING: who receives the next card. */
+  /** Who must act: the chooser while CALLING, the starter while FLIPPING. */
   currentPlayerId: string | null;
+  /** Who gets the next card turned (FLIPPING). */
+  receiverId: string | null;
   /** Cards turned this round, in order. */
   dealt: KartaDealt[];
   /** SHA-256 of this round's secret seed (published before the call). */
@@ -82,6 +90,7 @@ export type KartaRuntimeEvent = {
   version: number;
   playerId?: string;
   round?: number;
+  starterId?: string;
   callerId?: string;
   deckCommitment?: string;
   rank?: KartaRank;

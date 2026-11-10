@@ -16,37 +16,54 @@ export type SeedSource = () => string;
 
 const other = (game: KartaGameState, userId: string): string => game.players.find((p) => p.userId !== userId)!.userId;
 
-/** A new match: [firstCallerId] calls the first rank. */
+/** Round state for [starterId]: the other player chooses; a fresh deck is sealed. */
+function newRound(game: KartaGameState, round: number, starterId: string, seed: string): KartaGameState {
+  const callerId = other(game, starterId);
+  return {
+    ...game,
+    round,
+    starterId,
+    callerId,
+    calledRank: null,
+    roundPhase: 'CALLING',
+    currentPlayerId: callerId,
+    receiverId: null,
+    dealt: [],
+    deckCommitment: commitmentOf(seed),
+  };
+}
+
+/** A new match; [firstStarterId] deals round 1 (the other player chooses). */
 export function createKartaMatch(
   matchId: string,
   playerIds: [string, string],
-  firstCallerId: string,
+  firstStarterId: string,
   newSeed: SeedSource,
 ): KartaMatchRuntimeState {
   const seed = newSeed();
-  return {
-    game: {
-      matchId,
-      rulesVersion: KARTA_V1,
-      version: 0,
-      phase: 'PLAYING',
-      players: playerIds.map((userId) => ({ userId })),
-      targetScore: KARTA_TARGET_SCORE,
-      scores: Object.fromEntries(playerIds.map((id) => [id, 0])),
-      round: 1,
-      callerId: firstCallerId,
-      calledRank: null,
-      roundPhase: 'CALLING',
-      currentPlayerId: firstCallerId,
-      dealt: [],
-      deckCommitment: commitmentOf(seed),
-      lastRound: null,
-      winnerOrder: [],
-      result: null,
-      finishReason: null,
-    },
-    secret: { seed },
+  const base: KartaGameState = {
+    matchId,
+    rulesVersion: KARTA_V1,
+    version: 0,
+    phase: 'PLAYING',
+    players: playerIds.map((userId) => ({ userId })),
+    targetScore: KARTA_TARGET_SCORE,
+    scores: Object.fromEntries(playerIds.map((id) => [id, 0])),
+    round: 1,
+    starterId: firstStarterId,
+    callerId: firstStarterId,
+    calledRank: null,
+    roundPhase: 'CALLING',
+    currentPlayerId: null,
+    receiverId: null,
+    dealt: [],
+    deckCommitment: '',
+    lastRound: null,
+    winnerOrder: [],
+    result: null,
+    finishReason: null,
   };
+  return { game: newRound(base, 1, firstStarterId, seed), secret: { seed } };
 }
 
 /** What a player may see: the secret seed stays on the server until revealed. */
@@ -74,13 +91,13 @@ export function executeKartaCommand(
     ...extra,
   });
 
+  // Resigning is allowed any time, by either player.
   if (command.type === 'RESIGN') {
-    const winnerId = other(game, command.playerId);
-    const winnerOrder = [winnerId, command.playerId];
+    const winnerOrder = [other(game, command.playerId), command.playerId];
     return {
       state: {
         ...state,
-        game: { ...game, version, phase: 'FINISHED', currentPlayerId: null, winnerOrder, result: 'WIN', finishReason: 'RESIGN' },
+        game: { ...game, version, phase: 'FINISHED', currentPlayerId: null, receiverId: null, winnerOrder, result: 'WIN', finishReason: 'RESIGN' },
       },
       events: [
         event(KartaEventType.PLAYER_RESIGNED, { playerId: command.playerId }),
@@ -94,69 +111,68 @@ export function executeKartaCommand(
   if (command.type === 'CALL') {
     if (game.roundPhase !== 'CALLING') throw new Error('INVALID_TURN_PHASE');
     if (!isKartaRank(command.rank)) throw new Error('INVALID_RANK');
-    // The other player receives the first card.
-    const receiver = other(game, command.playerId);
+    // Now only the starter acts; the first card goes to the chooser ("for away").
     return {
-      state: { ...state, game: { ...game, version, calledRank: command.rank, roundPhase: 'FLIPPING', currentPlayerId: receiver } },
+      state: {
+        ...state,
+        game: { ...game, version, calledRank: command.rank, roundPhase: 'FLIPPING', currentPlayerId: game.starterId, receiverId: game.callerId },
+      },
       events: [event(KartaEventType.RANK_CALLED, { playerId: command.playerId, rank: command.rank, round: game.round })],
     };
   }
 
-  // FLIP: the next card of the committed deck goes to the current player.
-  if (game.roundPhase !== 'FLIPPING' || !game.calledRank) throw new Error('INVALID_TURN_PHASE');
-  const deck = shuffledDeck(state.secret.seed);
+  // FLIP by the starter: the next card of the sealed deck goes to the receiver.
+  if (game.roundPhase !== 'FLIPPING' || !game.calledRank || !game.receiverId) throw new Error('INVALID_TURN_PHASE');
+  const receiverId = game.receiverId;
   const index = game.dealt.length;
-  const card = deck[index];
-  const dealt = [...game.dealt, { card, playerId: command.playerId }];
-  const events = [event(KartaEventType.CARD_FLIPPED, { playerId: command.playerId, card, index, round: game.round })];
+  const card = shuffledDeck(state.secret.seed)[index];
+  const dealt = [...game.dealt, { card, playerId: receiverId }];
+  const events = [event(KartaEventType.CARD_FLIPPED, { playerId: receiverId, card, index, round: game.round })];
 
   if (rankOf(card) !== game.calledRank) {
-    // Every rank appears 4 times in 52 cards, so a round always ends.
-    return {
-      state: { ...state, game: { ...game, version, dealt, currentPlayerId: other(game, command.playerId) } },
-      events,
-    };
+    // Alternate: for away, for me… Every rank appears 4 times, so a round always ends.
+    return { state: { ...state, game: { ...game, version, dealt, receiverId: other(game, receiverId) } }, events };
   }
 
-  const scores = { ...game.scores, [command.playerId]: (game.scores[command.playerId] ?? 0) + 1 };
-  const result = {
-    round: game.round,
-    winnerId: command.playerId,
-    rank: game.calledRank,
-    card,
-    flips: dealt.length,
-    seed: state.secret.seed,
-  };
-  events.push(event(KartaEventType.ROUND_WON, { playerId: command.playerId, rank: game.calledRank, card, scores, result }));
+  const scores = { ...game.scores, [receiverId]: (game.scores[receiverId] ?? 0) + 1 };
+  const result = { round: game.round, winnerId: receiverId, rank: game.calledRank, card, flips: dealt.length, seed: state.secret.seed };
+  events.push(event(KartaEventType.ROUND_WON, { playerId: receiverId, rank: game.calledRank, card, scores, result }));
 
-  if (scores[command.playerId] >= game.targetScore) {
-    const winnerOrder = [command.playerId, other(game, command.playerId)];
+  if (scores[receiverId] >= game.targetScore) {
+    const winnerOrder = [receiverId, other(game, receiverId)];
     events.push(event(KartaEventType.MATCH_FINISHED, { winnerOrder, reason: 'SCORE', scores }));
     return {
       state: {
         ...state,
-        game: { ...game, version, dealt, scores, lastRound: result, phase: 'FINISHED', currentPlayerId: null, winnerOrder, result: 'WIN', finishReason: 'SCORE' },
+        game: {
+          ...game,
+          version,
+          dealt,
+          scores,
+          lastRound: result,
+          phase: 'FINISHED',
+          currentPlayerId: null,
+          receiverId: null,
+          winnerOrder,
+          result: 'WIN',
+          finishReason: 'SCORE',
+        },
       },
       events,
     };
   }
 
-  // Next round: the other player calls, over a freshly committed deck.
+  // The round winner starts the next round; the loser chooses.
   const seed = newSeed();
-  const callerId = other(game, game.callerId);
-  const next: KartaGameState = {
-    ...game,
-    version,
-    scores,
-    lastRound: result,
-    round: game.round + 1,
-    callerId,
-    calledRank: null,
-    roundPhase: 'CALLING',
-    currentPlayerId: callerId,
-    dealt: [],
-    deckCommitment: commitmentOf(seed),
-  };
-  events.push(event(KartaEventType.ROUND_STARTED, { round: next.round, callerId, deckCommitment: next.deckCommitment, scores }));
+  const next = newRound({ ...game, version, scores, lastRound: result }, game.round + 1, receiverId, seed);
+  events.push(
+    event(KartaEventType.ROUND_STARTED, {
+      round: next.round,
+      starterId: next.starterId,
+      callerId: next.callerId,
+      deckCommitment: next.deckCommitment,
+      scores,
+    }),
+  );
   return { state: { game: next, secret: { seed } }, events };
 }

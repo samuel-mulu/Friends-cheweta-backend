@@ -42,11 +42,11 @@ export const KARTA_GAME: TurnGameDefinition<KartaMatchRuntimeState, KartaRuntime
   },
   defaultTurnSeconds: 15,
   isRulesVersion: isKartaRulesVersion,
-  // Who calls first is drawn fairly.
+  // Who starts (deals) round 1 is drawn fairly.
   create: (matchId, [a, b]) => createKartaMatch(matchId, [a, b], randomInt(2) === 0 ? a : b, cryptoSeed),
   execute: (state, command) => executeKartaCommand(state, command, cryptoSeed),
   isFinished: (state) => state.game.phase === 'FINISHED',
-  // Time ran out: call a random rank, or turn the card.
+  // Time ran out: the chooser calls a random rank, or the starter turns the next card.
   autoCommand: (state) =>
     state.game.roundPhase === 'CALLING' ? { type: 'CALL', rank: KARTA_RANKS[randomInt(KARTA_RANKS.length)] } : { type: 'FLIP' },
   resignCommand: () => ({ type: 'RESIGN' }),
