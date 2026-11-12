@@ -22,6 +22,7 @@
     "prisma:studio": "prisma studio",
     "seed": "tsx prisma/seed.ts",
     "seed:dev": "tsx prisma/seed-dev.ts",
+    "seed:prod": "node dist/seed/production-seed.js",
     "prebuild": "prisma generate",
     "simulate:ludo": "tsx src/games/ludo/simulation/cli.ts",
     "fuzz:ludo": "tsx src/games/ludo/simulation/fuzz.ts",

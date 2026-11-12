@@ -1,0 +1,13 @@
+node_modules
+dist
+coverage
+.git
+.env
+.env.*
+*.log
+*.tsbuildinfo
+src/generated
+test
+**/*.spec.ts
+prisma/seed.ts
+prisma/seed-dev.ts
