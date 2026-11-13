@@ -1,4 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { GameMode } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateGameModeDto } from './dto/create-game-mode.dto';
 import { UpdateGameModeDto } from './dto/update-game-mode.dto';
@@ -13,6 +14,26 @@ export class GamingService {
       orderBy: { name: 'asc' },
     });
     return games;
+  }
+
+  async listAdminGames() {
+    return this.prisma.game.findMany({
+      orderBy: { name: 'asc' },
+      include: { _count: { select: { modes: true, matches: true } } },
+    });
+  }
+
+  async listAdminModes(gameCode: string) {
+    const game = await this.prisma.game.findUnique({ where: { code: gameCode.toUpperCase() } });
+    if (!game) {
+      throw new NotFoundException({ code: 'GAME_NOT_FOUND', message: 'Game not found.' });
+    }
+
+    const modes = await this.prisma.gameMode.findMany({
+      where: { gameId: game.id },
+      orderBy: [{ stakeAmountMinor: 'asc' }, { playerCount: 'asc' }],
+    });
+    return modes.map((mode) => this.serializeMode(mode));
   }
 
   async listModes(gameCode: string) {
@@ -80,7 +101,7 @@ export class GamingService {
     return this.serializeMode(mode);
   }
 
-  private serializeMode(mode: any) {
+  private serializeMode(mode: GameMode) {
     return { ...mode, stakeAmountMinor: mode.stakeAmountMinor.toString() };
   }
 }
