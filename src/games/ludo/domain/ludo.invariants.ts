@@ -1,6 +1,6 @@
 import {
   LUDO_BASE_PROGRESS,
-  LUDO_FINISH_PROGRESS,
+  boardOf,
   isCommonTrackProgress,
   isFinishedProgress,
   isHomePathProgress,
@@ -19,6 +19,7 @@ export function assertValidLudoState(state: LudoGameState): void {
     throw new Error('Invalid tokensToWin.');
   }
 
+  const board = boardOf(state);
   const userIds = new Set<string>();
   const tokenIds = new Set<string>();
   const colors = new Set<string>();
@@ -37,22 +38,22 @@ export function assertValidLudoState(state: LudoGameState): void {
 
       const valid =
         (token.state === LudoTokenState.BASE && token.progress === LUDO_BASE_PROGRESS) ||
-        (token.state === LudoTokenState.ACTIVE && isCommonTrackProgress(token.progress)) ||
-        (token.state === LudoTokenState.HOME_PATH && isHomePathProgress(token.progress)) ||
-        (token.state === LudoTokenState.FINISHED && isFinishedProgress(token.progress));
+        (token.state === LudoTokenState.ACTIVE && isCommonTrackProgress(board, token.progress)) ||
+        (token.state === LudoTokenState.HOME_PATH && isHomePathProgress(board, token.progress)) ||
+        (token.state === LudoTokenState.FINISHED && isFinishedProgress(board, token.progress));
       if (!valid) throw new Error(`Invalid token state/progress for ${token.id}.`);
-      if (token.progress > LUDO_FINISH_PROGRESS) throw new Error('Token overshot finish.');
+      if (token.progress > board.finish) throw new Error('Token overshot finish.');
     }
   }
 
-  // Shared-track occupancy must be reachable under LUDO_CLASSIC_V1 rules.
+  // Shared-track occupancy must be reachable under the classic rules.
   // Different owners may coexist only on a safe square, and an opponent can
   // never coexist with a same-owner blockade (2+ tokens), even on a safe square.
   const occupancy = new Map<number, Map<string, number>>();
   for (const player of state.players) {
     for (const token of player.tokens) {
-      if (!isCommonTrackProgress(token.progress)) continue;
-      const square = toGlobalTrackIndex(token.color, token.progress);
+      if (!isCommonTrackProgress(board, token.progress)) continue;
+      const square = toGlobalTrackIndex(board, token.color, token.progress);
       const owners = occupancy.get(square) ?? new Map<string, number>();
       owners.set(player.userId, (owners.get(player.userId) ?? 0) + 1);
       occupancy.set(square, owners);

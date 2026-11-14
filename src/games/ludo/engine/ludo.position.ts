@@ -1,9 +1,4 @@
-import {
-  LUDO_FINISH_PROGRESS,
-  LUDO_TRACK_LAST_PROGRESS,
-  isCommonTrackProgress,
-  toGlobalTrackIndex,
-} from '../domain';
+import { LudoBoardSpec, boardOf, isCommonTrackProgress, toGlobalTrackIndex } from '../domain';
 import { LudoColor, LudoGameState, LudoToken } from '../domain';
 
 export function getTokenById(state: LudoGameState, tokenId: string): LudoToken | null {
@@ -19,12 +14,13 @@ export function getPlayerTokensOnGlobalSquare(
   ownerId: string,
   globalSquare: number,
 ): LudoToken[] {
+  const board = boardOf(state);
   const player = state.players.find((item) => item.userId === ownerId);
   if (!player) return [];
   return player.tokens.filter(
     (token) =>
-      isCommonTrackProgress(token.progress) &&
-      toGlobalTrackIndex(token.color, token.progress) === globalSquare,
+      isCommonTrackProgress(board, token.progress) &&
+      toGlobalTrackIndex(board, token.color, token.progress) === globalSquare,
   );
 }
 
@@ -33,25 +29,27 @@ export function getOpponentTokensOnGlobalSquare(
   ownerId: string,
   globalSquare: number,
 ): LudoToken[] {
+  const board = boardOf(state);
   return state.players
     .filter((player) => player.userId !== ownerId)
     .flatMap((player) =>
       player.tokens.filter(
         (token) =>
-          isCommonTrackProgress(token.progress) &&
-          toGlobalTrackIndex(token.color, token.progress) === globalSquare,
+          isCommonTrackProgress(board, token.progress) &&
+          toGlobalTrackIndex(board, token.color, token.progress) === globalSquare,
       ),
     );
 }
 
 export function getOpponentBlockadeSquares(state: LudoGameState, ownerId: string): Set<number> {
+  const board = boardOf(state);
   const counts = new Map<string, { square: number; count: number }>();
 
   for (const player of state.players) {
     if (player.userId === ownerId) continue;
     for (const token of player.tokens) {
-      if (!isCommonTrackProgress(token.progress)) continue;
-      const square = toGlobalTrackIndex(token.color, token.progress);
+      if (!isCommonTrackProgress(board, token.progress)) continue;
+      const square = toGlobalTrackIndex(board, token.color, token.progress);
       const key = `${player.userId}:${square}`;
       const previous = counts.get(key);
       counts.set(key, { square, count: (previous?.count ?? 0) + 1 });
@@ -69,20 +67,21 @@ export function getOpponentBlockadeSquares(state: LudoGameState, ownerId: string
  * private to the token owner and cannot contain opponent blockades.
  */
 export function getTraversedCommonTrackSquares(
+  board: LudoBoardSpec,
   color: LudoColor,
   fromProgress: number,
   toProgress: number,
 ): number[] {
   if (toProgress <= fromProgress) return [];
   const start = Math.max(fromProgress + 1, 0);
-  const end = Math.min(toProgress, LUDO_TRACK_LAST_PROGRESS);
+  const end = Math.min(toProgress, board.trackLast);
   const result: number[] = [];
   for (let progress = start; progress <= end; progress += 1) {
-    result.push(toGlobalTrackIndex(color, progress));
+    result.push(toGlobalTrackIndex(board, color, progress));
   }
   return result;
 }
 
-export function isProgressWithinFinish(progress: number): boolean {
-  return Number.isInteger(progress) && progress >= 0 && progress <= LUDO_FINISH_PROGRESS;
+export function isProgressWithinFinish(board: LudoBoardSpec, progress: number): boolean {
+  return Number.isInteger(progress) && progress >= 0 && progress <= board.finish;
 }

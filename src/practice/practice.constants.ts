@@ -5,7 +5,7 @@ export const PRACTICE_LEVELS: readonly PracticeLevel[] = ['EASY', 'NORMAL', 'HAR
 
 /** Match.source for practice games: free, excluded from stats, leaderboard and rematch. */
 export const PRACTICE_SOURCE = 'PRACTICE';
-export const PRACTICE_RULES_VERSION = 'LUDO_CLASSIC_V2' as const;
+export const PRACTICE_RULES_VERSION = 'LUDO_CLASSIC_V3' as const;
 
 export type PracticeGame = 'LUDO' | 'DAMA';
 export const PRACTICE_GAMES: readonly PracticeGame[] = ['LUDO', 'DAMA'];

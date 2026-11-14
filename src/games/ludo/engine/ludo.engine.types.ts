@@ -13,6 +13,12 @@ export type LudoLegalMove = {
   toState: LudoTokenState;
   destinationGlobalSquare: number | null;
   capturedTokenIds: string[];
+  /**
+   * Every progress value the token visits, starting where it stands (a yard
+   * exit is `[-1, 0]`). Clients animate this list instead of deriving the
+   * board geometry themselves.
+   */
+  path: number[];
 };
 
 export type LudoMoveResolution = {

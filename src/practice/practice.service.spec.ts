@@ -50,7 +50,7 @@ describe('PracticeService', () => {
       status: 'READY',
       stakeAmountMinor: 0n,
       source: 'PRACTICE',
-      rulesVersion: 'LUDO_CLASSIC_V2',
+      rulesVersion: 'LUDO_CLASSIC_V3',
     });
     expect(data.participants.create).toEqual([
       { userId: 'human', seat: 0 },

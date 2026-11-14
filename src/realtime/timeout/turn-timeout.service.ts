@@ -15,6 +15,7 @@ import { DAMA_GAME_CODE } from '../dama/dama-runtime.service';
 import { DamaTurnTimerService } from '../dama/dama-turn-timer.service';
 import { KARTA_GAME_CODE, KartaTurnTimerService } from '../karta/karta.game';
 import { MatchJoinTracker } from '../match-join-tracker';
+import { chooseTimeoutMove } from './timeout-move-chooser';
 import { LudoTimingState } from './turn-timeout.types';
 
 @Injectable()
@@ -311,7 +312,7 @@ export class TurnTimeoutService {
         expectedVersion: state.game.version,
       };
     } else if (state.game.turnPhase === LudoTurnPhase.WAITING_FOR_MOVE) {
-      const tokenId = [...state.game.legalTokenIds].sort()[0];
+      const tokenId = chooseTimeoutMove(state.game, playerId);
       if (!tokenId) throw new Error('TIMEOUT_WITHOUT_LEGAL_MOVE');
       command = {
         matchId,

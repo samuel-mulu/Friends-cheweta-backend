@@ -1,10 +1,11 @@
 import {
   LUDO_BASE_PROGRESS,
-  LUDO_FINISH_PROGRESS,
-  LUDO_HOME_START_PROGRESS,
   LUDO_CLASSIC_V1,
+  LudoBoardSpec,
+  boardOf,
   isCommonTrackProgress,
   isSafeGlobalSquare,
+  progressPath,
   toGlobalTrackIndex,
 } from '../domain';
 import { LudoGameState, LudoToken, LudoTokenState } from '../domain';
@@ -22,9 +23,9 @@ function assertDice(diceValue: number): void {
   }
 }
 
-function targetState(progress: number): LudoTokenState {
-  if (progress === LUDO_FINISH_PROGRESS) return LudoTokenState.FINISHED;
-  if (progress >= LUDO_HOME_START_PROGRESS) return LudoTokenState.HOME_PATH;
+function targetState(board: LudoBoardSpec, progress: number): LudoTokenState {
+  if (progress === board.finish) return LudoTokenState.FINISHED;
+  if (progress >= board.homeStart) return LudoTokenState.HOME_PATH;
   return LudoTokenState.ACTIVE;
 }
 
@@ -36,7 +37,6 @@ function captureIdsAtDestination(
   if (globalSquare === null || isSafeGlobalSquare(globalSquare)) return [];
   return getOpponentTokensOnGlobalSquare(state, ownerId, globalSquare).map((token) => token.id);
 }
-
 
 function wouldCreateBlockadeWithOpponent(
   state: LudoGameState,
@@ -52,26 +52,28 @@ function wouldCreateBlockadeWithOpponent(
 
 function isBlockedByOpponent(
   state: LudoGameState,
+  board: LudoBoardSpec,
   token: LudoToken,
   fromProgress: number,
   toProgress: number,
 ): boolean {
   const blockadeSquares = getOpponentBlockadeSquares(state, token.ownerId);
   if (blockadeSquares.size === 0) return false;
-  return getTraversedCommonTrackSquares(token.color, fromProgress, toProgress).some((square) =>
+  return getTraversedCommonTrackSquares(board, token.color, fromProgress, toProgress).some((square) =>
     blockadeSquares.has(square),
   );
 }
 
 function buildDeployMove(
   state: LudoGameState,
+  board: LudoBoardSpec,
   token: LudoToken,
   diceValue: number,
 ): LudoLegalMove | null {
   if (token.state !== LudoTokenState.BASE) return null;
   if (LUDO_CLASSIC_V1.requireSixToDeploy && diceValue !== 6) return null;
 
-  const destination = toGlobalTrackIndex(token.color, 0);
+  const destination = toGlobalTrackIndex(board, token.color, 0);
   const blockadeSquares = getOpponentBlockadeSquares(state, token.ownerId);
   if (blockadeSquares.has(destination)) return null;
   if (wouldCreateBlockadeWithOpponent(state, token.ownerId, destination)) return null;
@@ -84,22 +86,25 @@ function buildDeployMove(
     toState: LudoTokenState.ACTIVE,
     destinationGlobalSquare: destination,
     capturedTokenIds: captureIdsAtDestination(state, token.ownerId, destination),
+    path: progressPath(LUDO_BASE_PROGRESS, 0),
   };
 }
 
 function buildTrackMove(
   state: LudoGameState,
+  board: LudoBoardSpec,
   token: LudoToken,
   diceValue: number,
 ): LudoLegalMove | null {
   if (token.state === LudoTokenState.BASE || token.state === LudoTokenState.FINISHED) return null;
 
   const destinationProgress = token.progress + diceValue;
-  if (destinationProgress > LUDO_FINISH_PROGRESS) return null;
-  if (isBlockedByOpponent(state, token, token.progress, destinationProgress)) return null;
+  // Exact roll into home: anything past the finish is not a move at all.
+  if (destinationProgress > board.finish) return null;
+  if (isBlockedByOpponent(state, board, token, token.progress, destinationProgress)) return null;
 
-  const destinationGlobalSquare = isCommonTrackProgress(destinationProgress)
-    ? toGlobalTrackIndex(token.color, destinationProgress)
+  const destinationGlobalSquare = isCommonTrackProgress(board, destinationProgress)
+    ? toGlobalTrackIndex(board, token.color, destinationProgress)
     : null;
   if (
     destinationGlobalSquare !== null &&
@@ -111,9 +116,10 @@ function buildTrackMove(
     kind: LudoMoveKind.MOVE,
     fromProgress: token.progress,
     toProgress: destinationProgress,
-    toState: targetState(destinationProgress),
+    toState: targetState(board, destinationProgress),
     destinationGlobalSquare,
     capturedTokenIds: captureIdsAtDestination(state, token.ownerId, destinationGlobalSquare),
+    path: progressPath(token.progress, destinationProgress),
   };
 }
 
@@ -125,12 +131,13 @@ export function getLegalMoves(
   assertDice(diceValue);
   const player = state.players.find((item) => item.userId === playerId);
   if (!player) throw new Error('Player is not part of this Ludo game.');
+  const board = boardOf(state);
 
   return player.tokens.flatMap((token) => {
     const move =
       token.state === LudoTokenState.BASE
-        ? buildDeployMove(state, token, diceValue)
-        : buildTrackMove(state, token, diceValue);
+        ? buildDeployMove(state, board, token, diceValue)
+        : buildTrackMove(state, board, token, diceValue);
     return move ? [move] : [];
   });
 }

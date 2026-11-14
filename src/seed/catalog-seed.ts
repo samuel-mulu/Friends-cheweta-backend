@@ -55,7 +55,7 @@ export async function seedCatalog(prisma: PrismaClient): Promise<{ bots: number 
         stakeAmountMinor: mode.stakeAmountMinor,
         platformFeeBps: 0,
         turnDurationSeconds: 30,
-        rulesVersion: 'LUDO_CLASSIC_V2',
+        rulesVersion: 'LUDO_CLASSIC_V3',
         enabled: true,
       },
       create: {
@@ -66,7 +66,7 @@ export async function seedCatalog(prisma: PrismaClient): Promise<{ bots: number 
         stakeAmountMinor: mode.stakeAmountMinor,
         platformFeeBps: 0,
         turnDurationSeconds: 30,
-        rulesVersion: 'LUDO_CLASSIC_V2',
+        rulesVersion: 'LUDO_CLASSIC_V3',
         enabled: true,
       },
     });

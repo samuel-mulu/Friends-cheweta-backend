@@ -58,25 +58,36 @@ export class RealtimePublisherService {
   }
 
   private publishEvents(
-    result: { duplicate: boolean; events: Array<{ type: string; matchId: string; version: number }> },
+    result: {
+      duplicate: boolean;
+      commandId?: string;
+      events: Array<{ type: string; matchId: string; version: number }>;
+    },
     names: Record<string, string>,
     fallback: string,
   ): void {
-    if (!this.server || result.duplicate) return;
-    for (const event of result.events) {
+    const server = this.server;
+    if (!server || result.duplicate) return;
+    // One command can emit several events at the same state version (a roll
+    // and its auto-played move, for instance). The batch fields let clients
+    // order those and know when the burst is complete.
+    const batchId = result.commandId ?? randomUUID();
+    const serverTime = new Date().toISOString();
+    result.events.forEach((event, batchIndex) => {
       const envelope = {
         protocolVersion: REALTIME_PROTOCOL_VERSION,
         eventId: randomUUID(),
-        serverTime: new Date().toISOString(),
+        serverTime,
         matchId: event.matchId,
         version: event.version,
+        batchId,
+        batchIndex,
+        batchSize: result.events.length,
         data: event,
       };
-      this.server
-        .to(this.matchRoom(event.matchId))
-        .emit(names[event.type] ?? fallback, envelope);
-      this.server.to(ADMIN_OPERATIONS_ROOM).emit('admin:match_event', envelope);
-    }
+      server.to(this.matchRoom(event.matchId)).emit(names[event.type] ?? fallback, envelope);
+      server.to(ADMIN_OPERATIONS_ROOM).emit('admin:match_event', envelope);
+    });
   }
 
   publishUser(userId: string, eventName: string, data: unknown, matchId?: string): void {

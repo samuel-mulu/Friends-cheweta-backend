@@ -32,6 +32,28 @@ describe('RealtimePublisherService', () => {
     expect(emitted[1].payload).toBe(emitted[0].payload);
   });
 
+  it('stamps every event of one command with the same batch id and its index', () => {
+    const { publisher, emitted } = createPublisher();
+    publisher.publishExecution({
+      commandId: 'roll-7',
+      version: 5,
+      duplicate: false,
+      state: {} as any,
+      events: [
+        { type: 'DICE_ROLLED', matchId: 'm1', version: 5 } as any,
+        { type: 'TOKEN_MOVED', matchId: 'm1', version: 6 } as any,
+        { type: 'TURN_STARTED', matchId: 'm1', version: 6 } as any,
+      ],
+    });
+    const toMatch = emitted.filter((e) => e.room === 'match:m1').map((e) => e.payload);
+    expect(toMatch.map((p) => [p.batchId, p.batchIndex, p.batchSize])).toEqual([
+      ['roll-7', 0, 3],
+      ['roll-7', 1, 3],
+      ['roll-7', 2, 3],
+    ]);
+    expect(new Set(toMatch.map((p) => p.eventId)).size).toBe(3);
+  });
+
   it('does not re-broadcast duplicate executions', () => {
     const { publisher, emitted } = createPublisher();
     publisher.publishExecution({

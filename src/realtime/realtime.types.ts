@@ -1,3 +1,4 @@
+import type { LudoBoardSpec } from '../games/ludo/domain';
 import type { LudoMovePreview } from '../games/ludo/engine';
 import { Socket } from 'socket.io';
 import { UserRole, UserStatus } from '../generated/prisma/enums';
@@ -27,6 +28,10 @@ export type RealtimeEnvelope<T> = {
   serverTime: string;
   matchId?: string;
   version?: number;
+  /** Set on runtime events: id of the command that produced this burst and the event's place in it. */
+  batchId?: string;
+  batchIndex?: number;
+  batchSize?: number;
   data: T;
 };
 
@@ -53,6 +58,8 @@ export type SnapshotAck =
       recentMessages?: unknown[];
       /** Where each legal token would land (when the current player must move). */
       legalMoves?: LudoMovePreview[];
+      /** Resolved board geometry for this match's rules version (progress thresholds). */
+      board?: LudoBoardSpec;
     }
   | { ok: false; code: string; message: string };
 

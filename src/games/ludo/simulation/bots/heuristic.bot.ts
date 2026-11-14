@@ -1,6 +1,7 @@
 import {
   LudoGameState,
   LudoTokenState,
+  boardOf,
   isSafeGlobalSquare,
   toGlobalTrackIndex,
 } from '../../domain';
@@ -8,7 +9,6 @@ import { LudoEngine, LudoLegalMove, LudoMoveKind } from '../../engine';
 import { BotRandom, LudoBot } from './bot.types';
 
 const engine = new LudoEngine();
-const LAST_TRACK_PROGRESS = 51;
 
 /**
  * Scores every legal move like an experienced player: take captures, get
@@ -50,10 +50,11 @@ export class HeuristicBot implements LudoBot {
     diceValue: number,
     move: LudoLegalMove,
   ): number {
+    const board = boardOf(state);
     let score = 0;
     score += move.capturedTokenIds.length * 120;
-    if (move.toProgress >= 57) score += 90;
-    else if (move.toProgress >= 52) score += 35; // home lane cannot be attacked
+    if (move.toProgress >= board.finish) score += 90;
+    else if (move.toProgress >= board.homeStart) score += 35; // home lane cannot be attacked
     if (move.kind === LudoMoveKind.DEPLOY) score += 60;
     if (move.destinationGlobalSquare !== null && isSafeGlobalSquare(move.destinationGlobalSquare))
       score += 25;
@@ -74,6 +75,7 @@ export class HeuristicBot implements LudoBot {
 
 /** Can any opponent token reach this token's square with one die (1–6)? */
 function threatened(state: LudoGameState, ownerId: string, tokenId: string): boolean {
+  const board = boardOf(state);
   const owner = state.players.find((player) => player.userId === ownerId);
   const token = owner?.tokens.find((t) => t.id === tokenId);
   if (
@@ -81,11 +83,11 @@ function threatened(state: LudoGameState, ownerId: string, tokenId: string): boo
     !token ||
     token.state !== LudoTokenState.ACTIVE ||
     token.progress < 0 ||
-    token.progress > LAST_TRACK_PROGRESS
+    token.progress > board.trackLast
   ) {
     return false;
   }
-  const target = toGlobalTrackIndex(owner.color, token.progress);
+  const target = toGlobalTrackIndex(board, owner.color, token.progress);
   if (isSafeGlobalSquare(target)) return false;
 
   for (const opponent of state.players) {
@@ -94,12 +96,12 @@ function threatened(state: LudoGameState, ownerId: string, tokenId: string): boo
       if (
         attacker.state !== LudoTokenState.ACTIVE ||
         attacker.progress < 0 ||
-        attacker.progress > LAST_TRACK_PROGRESS
+        attacker.progress > board.trackLast
       )
         continue;
-      const from = toGlobalTrackIndex(opponent.color, attacker.progress);
-      const distance = (target - from + 52) % 52;
-      if (distance >= 1 && distance <= 6 && attacker.progress + distance <= LAST_TRACK_PROGRESS)
+      const from = toGlobalTrackIndex(board, opponent.color, attacker.progress);
+      const distance = (target - from + board.trackLength) % board.trackLength;
+      if (distance >= 1 && distance <= 6 && attacker.progress + distance <= board.trackLast)
         return true;
     }
   }

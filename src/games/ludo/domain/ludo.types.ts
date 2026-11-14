@@ -32,7 +32,11 @@ export type LudoToken = {
   ownerId: string;
   color: LudoColor;
   state: LudoTokenState;
-  /** -1 = base, 0..51 = common track, 52..56 = home column, 57 = finished */
+  /**
+   * Player-relative progress; thresholds come from `boardOf(state)`.
+   * -1 = base, 0..trackLast = common track, homeStart..homeLast = home column,
+   * finish = home. (V1/V2: 0..51 / 52..56 / 57. V3: 0..50 / 51..55 / 56.)
+   */
   progress: number;
 };
 

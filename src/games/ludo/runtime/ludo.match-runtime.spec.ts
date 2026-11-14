@@ -176,6 +176,59 @@ describe('LudoMatchRuntime', () => {
     expect(runtime.getState().game.winnerOrder).toEqual(['p1', 'p2']);
   });
 
+  describe('a player who is out leaves only shared-track tokens for the yard', () => {
+    function runtimeWithMixedTokens(tokensToWin: number) {
+      const game = createInitialLudoState('m1', ['p1', 'p2', 'p3'], 'LUDO_CLASSIC_V3', { tokensToWin });
+      game.phase = LudoMatchPhase.PLAYING;
+      game.turnPhase = LudoTurnPhase.WAITING_FOR_ROLL;
+      game.currentPlayerId = 'p1';
+      const [lane, track, finished, base] = game.players[0].tokens;
+      lane.state = LudoTokenState.HOME_PATH;
+      lane.progress = 55;
+      track.state = LudoTokenState.ACTIVE;
+      track.progress = 20;
+      finished.state = LudoTokenState.FINISHED;
+      finished.progress = 56;
+      void base;
+      return LudoMatchRuntime.restore(
+        {
+          game,
+          startingRoll: { round: 1, candidatePlayerIds: ['p1', 'p2', 'p3'], rolls: {} },
+          resignedPlayerIds: [],
+        },
+        new FixedDiceProvider([1]),
+      );
+    }
+
+    it('on reaching the goal, home-lane tokens stay in the lane', () => {
+      const runtime = runtimeWithMixedTokens(2);
+      runtime.execute({ type: 'ROLL_DICE', commandId: 'roll', playerId: 'p1', expectedVersion: 0 });
+      const result = runtime.execute({
+        type: 'MOVE_TOKEN',
+        commandId: 'move',
+        playerId: 'p1',
+        tokenId: 'RED-1',
+        expectedVersion: 1,
+      });
+      const finishedEvent = result.events.find((e) => e.type === LudoRuntimeEventType.PLAYER_FINISHED);
+      expect(finishedEvent?.tokenIds).toEqual(['RED-2']);
+      const tokens = runtime.getState().game.players[0].tokens;
+      expect(tokens[0]).toMatchObject({ state: LudoTokenState.FINISHED, progress: 56 });
+      expect(tokens[1]).toMatchObject({ state: LudoTokenState.BASE, progress: -1 });
+      expect(tokens[2]).toMatchObject({ state: LudoTokenState.FINISHED, progress: 56 });
+    });
+
+    it('on resigning, home-lane tokens stay in the lane', () => {
+      const runtime = runtimeWithMixedTokens(4);
+      const result = runtime.execute({ type: 'RESIGN', commandId: 'resign', playerId: 'p1', expectedVersion: 0 });
+      const resigned = result.events.find((e) => e.type === LudoRuntimeEventType.PLAYER_RESIGNED);
+      expect(resigned?.tokenIds).toEqual(['RED-2']);
+      const tokens = runtime.getState().game.players[0].tokens;
+      expect(tokens[0]).toMatchObject({ state: LudoTokenState.HOME_PATH, progress: 55 });
+      expect(tokens[1]).toMatchObject({ state: LudoTokenState.BASE, progress: -1 });
+    });
+  });
+
   it('resignation ends a 1v1 match with the opponent first', () => {
     const game = createInitialLudoState('m1', ['p1', 'p2']);
     game.phase = LudoMatchPhase.PLAYING;

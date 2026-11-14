@@ -489,9 +489,11 @@ export class LudoMatchRuntime {
   }
 
   /**
-   * A player who is out (goal reached or resigned) takes their unfinished
-   * tokens off the track, back to the yard: a token that never moves again
-   * must not block or be captured by the players still racing. Returns the
+   * A player who is out (goal reached or resigned) takes their shared-track
+   * tokens off the board, back to the yard: a token that never moves again
+   * must not block or be captured by the players still racing. Tokens already
+   * in the private home column stay where they are (they cannot interact with
+   * anyone, and pulling them out of the lane looks like a bug). Returns the
    * retired ids (sent as the event's `tokenIds` so clients mirror it).
    */
   private retireTokens(playerId: string): string[] {
@@ -499,7 +501,7 @@ export class LudoMatchRuntime {
     if (!player) throw new Error('PLAYER_NOT_IN_MATCH');
     const retired: string[] = [];
     for (const token of player.tokens) {
-      if (token.state === LudoTokenState.FINISHED || token.state === LudoTokenState.BASE) continue;
+      if (token.state !== LudoTokenState.ACTIVE) continue;
       token.state = LudoTokenState.BASE;
       token.progress = LUDO_BASE_PROGRESS;
       retired.push(token.id);

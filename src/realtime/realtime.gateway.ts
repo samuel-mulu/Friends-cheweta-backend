@@ -34,6 +34,7 @@ import {
   MatchReactionDto,
   MatchChatSendDto,
 } from '../chat/dto/chat.dto';
+import { boardOf } from '../games/ludo/domain';
 import { LudoRuntimeCommand } from '../games/ludo/runtime';
 import { LobbyCommandDto, LobbyJoinDto } from '../lobby/dto/lobby.dto';
 import { LobbyService } from '../lobby/lobby.service';
@@ -354,7 +355,16 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       const recentMessages = await this.chat.getMatchHistory(dto.matchId).catch(() => []);
       const legalMoves = this.ludoRuntime.previewMoves(state);
       void this.botDriver.consider(state); // practice: a bot may need to roll first
-      return { ok: true, state, timing, version: state.game.version, participants, recentMessages, legalMoves };
+      return {
+        ok: true,
+        state,
+        timing,
+        version: state.game.version,
+        participants,
+        recentMessages,
+        legalMoves,
+        board: boardOf(state.game),
+      };
     } catch (error) {
       return this.errorAck(error);
     }
@@ -457,7 +467,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       const timing = await this.timeouts.getTiming(dto.matchId, state);
       const participants = await this.ludoRuntime.getParticipantViews(dto.matchId, state);
       const legalMoves = this.ludoRuntime.previewMoves(state);
-      return { ok: true, state, timing, version: state.game.version, participants, legalMoves };
+      return { ok: true, state, timing, version: state.game.version, participants, legalMoves, board: boardOf(state.game) };
     } catch (error) {
       return this.errorAck(error);
     }
