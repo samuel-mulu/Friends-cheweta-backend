@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
-import { MatchStatus } from '../generated/prisma/enums';
+import { MatchStatus, RiskFlagStatus, RiskSeverity } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -22,9 +22,13 @@ export class RiskService {
     }
   }
 
+  /** `status`: OPEN | REVIEWED | DISMISSED | ALL. Worst severity first. */
   async list(status = 'OPEN', limit = 100) {
+    if (status !== 'ALL' && !(status in RiskFlagStatus)) {
+      throw new BadRequestException({ code: 'INVALID_RISK_STATUS', message: 'Unknown risk flag status.' });
+    }
     return this.prisma.riskFlag.findMany({
-      where: status === 'ALL' ? undefined : { status },
+      where: status === 'ALL' ? undefined : { status: status as RiskFlagStatus },
       include: {
         user: { select: { id: true, fullName: true, phoneNumber: true } },
         match: { select: { id: true, status: true, createdAt: true, finishedAt: true } },
@@ -103,7 +107,7 @@ export class RiskService {
     userId?: string;
     matchId?: string;
     type: string;
-    severity: string;
+    severity: RiskSeverity;
     reason: string;
     evidence: unknown;
     fingerprint: string;

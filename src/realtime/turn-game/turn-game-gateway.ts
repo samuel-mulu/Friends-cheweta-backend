@@ -1,5 +1,5 @@
 import { ChatService } from '../../chat/chat.service';
-import { requireUser } from '../gateways/gateway.util';
+import { Ack, requireUser } from '../gateways/gateway.util';
 import { LudoCommandDto, MatchJoinDto } from '../dto/ludo-command.dto';
 import { RealtimePublisherService } from '../realtime-publisher.service';
 import { AuthenticatedSocket } from '../realtime.types';
@@ -25,7 +25,7 @@ export abstract class TurnGameGateway<S extends TurnGameState, C extends TurnGam
   /** Called after a player joins (e.g. a practice bot may act first). */
   protected onJoined(_state: S): void {}
 
-  protected async joinMatch(socket: AuthenticatedSocket, dto: MatchJoinDto): Promise<any> {
+  protected async joinMatch(socket: AuthenticatedSocket, dto: MatchJoinDto): Promise<Ack> {
     try {
       const user = requireUser(socket);
       const state = await this.runtime.getSnapshot(dto.matchId, user.id);
@@ -39,7 +39,7 @@ export abstract class TurnGameGateway<S extends TurnGameState, C extends TurnGam
     }
   }
 
-  protected async syncMatch(socket: AuthenticatedSocket, dto: MatchJoinDto): Promise<any> {
+  protected async syncMatch(socket: AuthenticatedSocket, dto: MatchJoinDto): Promise<Ack> {
     try {
       const user = requireUser(socket);
       const state = await this.runtime.getSnapshot(dto.matchId, user.id);
@@ -49,7 +49,7 @@ export abstract class TurnGameGateway<S extends TurnGameState, C extends TurnGam
     }
   }
 
-  protected async command(socket: AuthenticatedSocket, dto: LudoCommandDto, body: CommandBody<C>): Promise<any> {
+  protected async command(socket: AuthenticatedSocket, dto: LudoCommandDto, body: CommandBody<C>): Promise<Ack> {
     try {
       const user = requireUser(socket);
       if (!socket.rooms.has(this.publisher.matchRoom(dto.matchId))) throw new Error('MATCH_ROOM_NOT_JOINED');

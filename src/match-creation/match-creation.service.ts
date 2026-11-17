@@ -10,6 +10,7 @@ import { COMMITTED_MATCH_STATUSES } from '../common/match-status';
 import { Prisma } from '../generated/prisma/client';
 import {
   MatchEntryStatus,
+  MatchSource as PrismaMatchSource,
   MatchStatus,
   UserStatus,
   WalletTransactionType,
@@ -21,7 +22,14 @@ import { PrismaService } from '../prisma/prisma.service';
 const SUPPORTED_GAME_CODES = ['LUDO', 'DAMA', 'KARTA'];
 import { WalletService } from '../wallet/wallet.service';
 
-export type MatchSource = 'CHALLENGE' | 'REMATCH' | 'INVITE';
+/** Paid matches come from a challenge, a rematch or an invite (never PRACTICE). */
+export type MatchSource = Exclude<PrismaMatchSource, 'PRACTICE'>;
+
+type MatchWithMoney = {
+  stakeAmountMinor: bigint;
+  gameMode: { stakeAmountMinor: bigint };
+  entries?: Array<{ amountMinor: bigint }>;
+};
 
 type CreateSecuredMatchInput = {
   gameModeId: string;
@@ -288,16 +296,12 @@ export class MatchCreationService {
     };
   }
 
-  private serializeMatch(match: any) {
+  private serializeMatch<T extends MatchWithMoney>(match: T) {
     return {
       ...match,
       stakeAmountMinor: match.stakeAmountMinor.toString(),
       gameMode: { ...match.gameMode, stakeAmountMinor: match.gameMode.stakeAmountMinor.toString() },
-      entries:
-        match.entries?.map((entry: any) => ({
-          ...entry,
-          amountMinor: entry.amountMinor.toString(),
-        })) ?? [],
+      entries: match.entries?.map((entry) => ({ ...entry, amountMinor: entry.amountMinor.toString() })) ?? [],
     };
   }
 }

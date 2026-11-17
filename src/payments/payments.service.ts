@@ -312,11 +312,11 @@ export class PaymentsService {
     return amount;
   }
 
-  private serializeDeposit(row: any) {
+  private serializeDeposit<T extends { amountMinor: bigint }>(row: T) {
     return { ...row, amountMinor: row.amountMinor.toString() };
   }
 
-  private serializeWithdrawal(row: any) {
+  private serializeWithdrawal<T extends { amountMinor: bigint }>(row: T) {
     return { ...row, amountMinor: row.amountMinor.toString() };
   }
 }

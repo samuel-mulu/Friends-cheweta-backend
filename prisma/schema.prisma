@@ -63,6 +63,28 @@ enum MatchStatus {
   ABORTED
 }
 
+/// How a match came to be. PRACTICE is free play against a bot.
+enum MatchSource {
+  CHALLENGE
+  REMATCH
+  INVITE
+  PRACTICE
+}
+
+/// Declared from least to most severe: ORDER BY severity DESC lists the worst first.
+enum RiskSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum RiskFlagStatus {
+  OPEN
+  REVIEWED
+  DISMISSED
+}
+
 model User {
   id           String     @id @default(uuid())
   fullName     String
@@ -234,7 +256,7 @@ model Match {
   platformFeeBps   Int
   sessionCode      String?     @unique
   challengeId      String?     @unique
-  source           String?
+  source           MatchSource?
   /// Set when this match was created by a rematch of a finished match.
   rematchOfMatchId String?
   matchmakingKey  String?     @unique
@@ -261,6 +283,8 @@ model Match {
   @@index([gameId, status, createdAt])
   @@index([gameModeId, status, createdAt])
   @@index([status, updatedAt])
+  @@index([status, entrySecuredAt])
+  @@index([status, createdAt])
   @@index([rematchOfMatchId])
 }
 
@@ -327,7 +351,6 @@ model MatchEvent {
 
   @@unique([matchId, sequence])
   @@index([matchId, version])
-  @@index([matchId, createdAt])
 }
 
 model MatchCheckpoint {
@@ -362,8 +385,8 @@ model RiskFlag {
   userId      String?
   matchId     String?
   type        String
-  severity    String
-  status      String   @default("OPEN")
+  severity    RiskSeverity
+  status      RiskFlagStatus @default(OPEN)
   reason      String
   evidence    Json?
   fingerprint String   @unique

@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
 import { ChallengeService } from '../../challenge/challenge.service';
+import { MatchHistoryService } from '../../match-history/match-history.service';
 import { SettlementService } from '../../settlement/settlement.service';
 import { RealtimePublisherService } from '../realtime-publisher.service';
 import { GameRegistry } from '../turn-game/game-registry';
@@ -14,12 +15,14 @@ import { PrematchCleanupService } from './prematch-cleanup.service';
 const GAMEPLAY_TICK_MS = 1000;
 const CLEANUP_TICK_MS = 15_000;
 const RECONCILIATION_TICK_MS = 5000;
+const EVENT_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
 @Injectable()
 export class RealtimeMaintenanceService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(RealtimeMaintenanceService.name);
   private readonly timers: NodeJS.Timeout[] = [];
   private readonly running = new Set<string>();
+  private lastEventPruneAt = 0;
 
   constructor(
     private readonly games: GameRegistry,
@@ -28,6 +31,7 @@ export class RealtimeMaintenanceService implements OnModuleInit, OnApplicationSh
     private readonly publisher: RealtimePublisherService,
     private readonly disconnects: DisconnectGraceService,
     private readonly prematch: PrematchCleanupService,
+    private readonly history: MatchHistoryService,
   ) {}
 
   onModuleInit(): void {
@@ -67,5 +71,14 @@ export class RealtimeMaintenanceService implements OnModuleInit, OnApplicationSh
     await this.prematch.processReadyNoShows();
     await this.prematch.processPrematchOrphans();
     for (const game of this.games.all()) await game.runtime.retryPostCommit();
+    await this.pruneOldEvents();
+  }
+
+  /** Once an hour: drop move-by-move history of matches closed long ago. */
+  private async pruneOldEvents(): Promise<void> {
+    if (Date.now() - this.lastEventPruneAt < EVENT_PRUNE_INTERVAL_MS) return;
+    this.lastEventPruneAt = Date.now();
+    const deleted = await this.history.pruneEvents();
+    if (deleted > 0) this.logger.log(`match_events_pruned rows=${deleted}`);
   }
 }

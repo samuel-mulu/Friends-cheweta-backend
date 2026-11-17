@@ -27,6 +27,8 @@ describe('RealtimeMaintenanceService (independent timers over the game registry)
       processPrematchOrphans: jest.fn(async () => 0),
     };
 
+    const history = { pruneEvents: jest.fn(async () => 0) };
+
     let resolveReconcile: () => void = () => undefined;
     let reconcileCallCount = 0;
     const settlement = {
@@ -45,6 +47,7 @@ describe('RealtimeMaintenanceService (independent timers over the game registry)
       { publishChallengeTransition: jest.fn() } as any,
       disconnects as any,
       prematch as any,
+      history as any,
     );
     return {
       service,
@@ -52,6 +55,7 @@ describe('RealtimeMaintenanceService (independent timers over the game registry)
       runtime,
       disconnects,
       prematch,
+      history,
       settlement,
       resolveCurrentReconcile: () => resolveReconcile(),
       getReconcileCallCount: () => reconcileCallCount,
@@ -103,6 +107,19 @@ describe('RealtimeMaintenanceService (independent timers over the game registry)
 
     await jest.advanceTimersByTimeAsync(15_000);
     expect(prematch.processReadyNoShows).toHaveBeenCalledTimes(2);
+
+    service.onApplicationShutdown();
+  });
+
+  it('prunes old match events at most once an hour', async () => {
+    const { service, history } = createService();
+    service.onModuleInit();
+
+    await jest.advanceTimersByTimeAsync(45_000); // three cleanup ticks
+    expect(history.pruneEvents).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(60 * 60 * 1000);
+    expect(history.pruneEvents).toHaveBeenCalledTimes(2);
 
     service.onApplicationShutdown();
   });

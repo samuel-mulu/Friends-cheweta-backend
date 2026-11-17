@@ -1,12 +1,26 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
-import { UserRole } from '../generated/prisma/enums';
+import { MatchSource, MatchStatus, UserRole } from '../generated/prisma/enums';
 import { LudoMatchRuntimeState } from '../games/ludo/runtime';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** Any game's runtime state: history only needs the authoritative version. */
 export type VersionedState = { game: { version: number } };
 export type RecordedEvent = { type: string; version: number };
+
+/** The money fields of a match row, whatever else was selected with it. */
+type MatchRow = {
+  stakeAmountMinor: bigint;
+  gameMode?: object;
+  entries?: Array<{ amountMinor: bigint }>;
+  settlement: { potAmountMinor: bigint; platformFeeMinor: bigint; payoutAmountMinor: bigint } | null;
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Matches that will never receive another event. */
+const CLOSED_STATUSES: MatchStatus[] = [MatchStatus.FINISHED, MatchStatus.CANCELLED, MatchStatus.ABORTED];
+const PRUNE_BATCH_MATCHES = 200;
+const PRUNE_MAX_BATCHES = 10;
 
 @Injectable()
 export class MatchHistoryService {
@@ -137,8 +151,11 @@ export class MatchHistoryService {
   }
 
   async listAdmin(limit = 50, status?: string) {
+    if (status && !(status in MatchStatus)) {
+      throw new BadRequestException({ code: 'INVALID_MATCH_STATUS', message: 'Unknown match status.' });
+    }
     const rows = await this.prisma.match.findMany({
-      where: status ? { status: status as any } : undefined,
+      where: status ? { status: status as MatchStatus } : undefined,
       include: {
         game: { select: { code: true, name: true } },
         gameMode: { select: { code: true, name: true } },
@@ -162,17 +179,40 @@ export class MatchHistoryService {
     if (!participant) throw new ForbiddenException({ code: 'MATCH_ACCESS_DENIED', message: 'You are not part of this match.' });
   }
 
-  private serializeMatch(row: any) {
+  /**
+   * Move-by-move events are kept for replay and disputes, then deleted: 30
+   * days after a match closes, 1 day for practice. The match row, its result,
+   * settlement and final checkpoint stay. Returns the number of rows deleted.
+   */
+  async pruneEvents(now = Date.now()): Promise<number> {
+    const paid = await this.pruneEventsWhere({ updatedAt: { lt: new Date(now - 30 * DAY_MS) } });
+    const practice = await this.pruneEventsWhere({ source: MatchSource.PRACTICE, updatedAt: { lt: new Date(now - DAY_MS) } });
+    return paid + practice;
+  }
+
+  private async pruneEventsWhere(where: Prisma.MatchWhereInput): Promise<number> {
+    let deleted = 0;
+    for (let batch = 0; batch < PRUNE_MAX_BATCHES; batch += 1) {
+      const matches = await this.prisma.match.findMany({
+        where: { ...where, status: { in: CLOSED_STATUSES }, events: { some: {} } },
+        select: { id: true },
+        take: PRUNE_BATCH_MATCHES,
+      });
+      if (matches.length === 0) break;
+      const result = await this.prisma.matchEvent.deleteMany({ where: { matchId: { in: matches.map((match) => match.id) } } });
+      deleted += result.count;
+      if (matches.length < PRUNE_BATCH_MATCHES) break;
+    }
+    return deleted;
+  }
+
+  private serializeMatch<T extends MatchRow>(row: T) {
+    const gameMode = row.gameMode as { stakeAmountMinor?: bigint } | undefined;
     return {
       ...row,
-      stakeAmountMinor: row.stakeAmountMinor?.toString?.() ?? row.stakeAmountMinor,
-      gameMode: row.gameMode
-        ? {
-            ...row.gameMode,
-            stakeAmountMinor: row.gameMode.stakeAmountMinor?.toString?.() ?? row.gameMode.stakeAmountMinor,
-          }
-        : row.gameMode,
-      entries: row.entries?.map((entry: any) => ({ ...entry, amountMinor: entry.amountMinor.toString() })),
+      stakeAmountMinor: row.stakeAmountMinor.toString(),
+      gameMode: gameMode ? { ...gameMode, stakeAmountMinor: gameMode.stakeAmountMinor?.toString() } : gameMode,
+      entries: row.entries?.map((entry) => ({ ...entry, amountMinor: entry.amountMinor.toString() })),
       settlement: row.settlement
         ? {
             ...row.settlement,
