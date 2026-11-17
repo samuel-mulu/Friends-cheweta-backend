@@ -2,8 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Server } from 'socket.io';
 import { ChallengeTransition } from '../challenge/challenge.types';
-import type { DamaRuntimeEvent } from '../games/dama/runtime';
-import { RuntimeExecution, REALTIME_PROTOCOL_VERSION } from './realtime.types';
+import { REALTIME_PROTOCOL_VERSION } from './realtime.types';
 
 export const LUDO_EVENT_NAMES: Record<string, string> = {
   STARTING_ROLL: 'ludo:starting_roll',
@@ -41,17 +40,9 @@ export class RealtimePublisherService {
     this.server = server;
   }
 
-  publishExecution(result: RuntimeExecution): void {
-    this.publishEvents(result, LUDO_EVENT_NAMES, 'ludo:event');
-  }
-
-  publishDamaExecution(result: { duplicate: boolean; events: DamaRuntimeEvent[] }): void {
-    this.publishEvents(result, DAMA_EVENT_NAMES, 'dama:event');
-  }
-
   /** Any turn game: events go out under the definition's socket names. */
   publishTurnGame(
-    result: { duplicate: boolean; events: Array<{ type: string; matchId: string; version: number }> },
+    result: { duplicate: boolean; commandId?: string; events: Array<{ type: string; matchId: string; version: number }> },
     definition: { key: string; eventNames: Record<string, string> },
   ): void {
     this.publishEvents(result, definition.eventNames, `${definition.key}:event`);

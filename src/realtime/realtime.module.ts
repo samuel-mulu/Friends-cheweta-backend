@@ -7,21 +7,24 @@ import { MatchHistoryModule } from '../match-history/match-history.module';
 import { SettlementModule } from '../settlement/settlement.module';
 import { BotDriverService } from '../practice/bot-driver.service';
 import { DamaBotDriverService } from '../practice/dama-bot-driver.service';
+import { PracticeService } from '../practice/practice.service';
 import { DamaRuntimeRepository } from './dama/dama-runtime.repository';
 import { DamaRuntimeService } from './dama/dama-runtime.service';
 import { DamaTurnTimerService } from './dama/dama-turn-timer.service';
 import { DamaGateway } from './dama/dama.gateway';
 import { KartaRuntimeRepository, KartaRuntimeService, KartaTurnTimerService } from './karta/karta.game';
 import { KartaGateway } from './karta/karta.gateway';
-import { PracticeService } from '../practice/practice.service';
-import { LudoRuntimeRepository } from './ludo-runtime.repository';
-import { LudoRuntimeService } from './ludo-runtime.service';
+import { LudoRuntimeRepository, LudoRuntimeService, LudoTurnTimerService } from './ludo/ludo-runtime.service';
+import { LudoGateway } from './ludo/ludo.gateway';
+import { MatchJoinTracker } from './match-join-tracker';
 import { PresenceService } from './presence.service';
 import { RealtimePublisherService } from './realtime-publisher.service';
 import { RealtimeAuthService } from './realtime-auth.service';
 import { RealtimeGateway } from './realtime.gateway';
+import { DisconnectGraceService } from './timeout/disconnect-grace.service';
+import { PrematchCleanupService } from './timeout/prematch-cleanup.service';
 import { RealtimeMaintenanceService } from './timeout/realtime-maintenance.service';
-import { TurnTimeoutService } from './timeout/turn-timeout.service';
+import { GameRegistry } from './turn-game/game-registry';
 
 @Module({
   imports: [LobbyModule, ChallengeModule, ChatModule, GameEntryModule, SettlementModule, MatchHistoryModule],
@@ -30,22 +33,47 @@ import { TurnTimeoutService } from './timeout/turn-timeout.service';
     RealtimeAuthService,
     PresenceService,
     RealtimePublisherService,
+    MatchJoinTracker,
+    // Ludo
     LudoRuntimeRepository,
     LudoRuntimeService,
-    TurnTimeoutService,
-    RealtimeMaintenanceService,
-    PracticeService,
+    LudoTurnTimerService,
+    LudoGateway,
     BotDriverService,
+    PracticeService,
+    // Dama
     DamaRuntimeRepository,
     DamaRuntimeService,
     DamaTurnTimerService,
     DamaBotDriverService,
     DamaGateway,
+    // Karta
     KartaRuntimeRepository,
     KartaRuntimeService,
     KartaTurnTimerService,
     KartaGateway,
+    // Cross-game
+    {
+      provide: GameRegistry,
+      inject: [LudoRuntimeService, LudoTurnTimerService, DamaRuntimeService, DamaTurnTimerService, KartaRuntimeService, KartaTurnTimerService],
+      useFactory: (
+        ludo: LudoRuntimeService,
+        ludoTimer: LudoTurnTimerService,
+        dama: DamaRuntimeService,
+        damaTimer: DamaTurnTimerService,
+        karta: KartaRuntimeService,
+        kartaTimer: KartaTurnTimerService,
+      ) =>
+        new GameRegistry([
+          { definition: ludo.definition, runtime: ludo, timer: ludoTimer },
+          { definition: dama.definition, runtime: dama, timer: damaTimer },
+          { definition: karta.definition, runtime: karta, timer: kartaTimer },
+        ]),
+    },
+    PrematchCleanupService,
+    DisconnectGraceService,
+    RealtimeMaintenanceService,
   ],
-  exports: [LudoRuntimeService, TurnTimeoutService],
+  exports: [LudoRuntimeService, GameRegistry],
 })
 export class RealtimeModule {}

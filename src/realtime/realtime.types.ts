@@ -3,7 +3,7 @@ import type { LudoMovePreview } from '../games/ludo/engine';
 import { Socket } from 'socket.io';
 import { UserRole, UserStatus } from '../generated/prisma/enums';
 import { LudoMatchRuntimeState, LudoRuntimeEvent } from '../games/ludo/runtime';
-import { LudoTimingState } from './timeout/turn-timeout.types';
+import type { TurnTiming } from './turn-game/turn-game-timer';
 
 export const REALTIME_PROTOCOL_VERSION = 1 as const;
 
@@ -48,11 +48,12 @@ export type CommandAck =
       message: string;
     };
 
+/** Ludo join/sync ack (the shape the Flutter client parses). */
 export type SnapshotAck =
   | {
       ok: true;
       state: LudoMatchRuntimeState;
-      timing: LudoTimingState;
+      timing: TurnTiming;
       version: number;
       participants: LudoMatchParticipantView[];
       recentMessages?: unknown[];

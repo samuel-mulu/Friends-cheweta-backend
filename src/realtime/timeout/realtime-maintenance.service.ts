@@ -1,19 +1,15 @@
 import { Injectable, Logger, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
 import { ChallengeService } from '../../challenge/challenge.service';
 import { SettlementService } from '../../settlement/settlement.service';
-import { LudoRuntimeService } from '../ludo-runtime.service';
 import { RealtimePublisherService } from '../realtime-publisher.service';
-import { DamaRuntimeService } from '../dama/dama-runtime.service';
-import { DamaTurnTimerService } from '../dama/dama-turn-timer.service';
-import { KartaRuntimeService, KartaTurnTimerService } from '../karta/karta.game';
-import { TurnTimeoutService } from './turn-timeout.service';
+import { GameRegistry } from '../turn-game/game-registry';
+import { DisconnectGraceService } from './disconnect-grace.service';
+import { PrematchCleanupService } from './prematch-cleanup.service';
 
-// DB5: gameplay maintenance (turn timeouts, disconnect grace, ready
-// no-shows) and settlement reconciliation used to share one 1-second tick
-// and one `running` guard - a slow/stuck settlement reconciliation pass
-// could starve time-critical gameplay processing for as long as it ran.
-// They now run on fully independent timers with independent guards, so one
-// can never block the other.
+// Gameplay maintenance (turn timeouts, disconnect grace, ready no-shows) and
+// settlement reconciliation run on independent timers with independent
+// guards, so a slow or stuck settlement pass can never starve time-critical
+// gameplay processing.
 const GAMEPLAY_TICK_MS = 1000;
 const RECONCILIATION_TICK_MS = 5000;
 
@@ -26,23 +22,17 @@ export class RealtimeMaintenanceService implements OnModuleInit, OnApplicationSh
   private settlementRunning = false;
 
   constructor(
-    private readonly timeouts: TurnTimeoutService,
-    private readonly settlement: SettlementService,
+    private readonly games: GameRegistry,
     private readonly challenges: ChallengeService,
+    private readonly settlement: SettlementService,
     private readonly publisher: RealtimePublisherService,
-    private readonly runtime: LudoRuntimeService,
-    private readonly damaTimer: DamaTurnTimerService,
-    private readonly damaRuntime: DamaRuntimeService,
-    private readonly kartaTimer: KartaTurnTimerService,
-    private readonly kartaRuntime: KartaRuntimeService,
+    private readonly disconnects: DisconnectGraceService,
+    private readonly prematch: PrematchCleanupService,
   ) {}
 
   onModuleInit(): void {
     this.gameplayTimer = setInterval(() => void this.tickGameplay(), GAMEPLAY_TICK_MS);
-    this.reconciliationTimer = setInterval(
-      () => void this.tickReconciliation(),
-      RECONCILIATION_TICK_MS,
-    );
+    this.reconciliationTimer = setInterval(() => void this.tickReconciliation(), RECONCILIATION_TICK_MS);
   }
 
   onApplicationShutdown(): void {
@@ -59,15 +49,11 @@ export class RealtimeMaintenanceService implements OnModuleInit, OnApplicationSh
         return [];
       });
       for (const transition of transitions) this.publisher.publishChallengeTransition(transition);
-      await this.timeouts.processDueTurnTimeouts();
-      await this.damaTimer.processDue();
-      await this.kartaTimer.processDue();
-      await this.timeouts.processDueDisconnects();
-      await this.timeouts.processReadyNoShows();
-      await this.timeouts.processPrematchOrphans();
-      await this.runtime.retryPostCommit();
-      await this.damaRuntime.retryPostCommit();
-      await this.kartaRuntime.retryPostCommit();
+      for (const game of this.games.all()) await game.timer.processDue();
+      await this.disconnects.processDue();
+      await this.prematch.processReadyNoShows();
+      await this.prematch.processPrematchOrphans();
+      for (const game of this.games.all()) await game.runtime.retryPostCommit();
     } catch (error) {
       this.logger.warn(`Gameplay maintenance tick failed: ${(error as Error).message}`);
     } finally {

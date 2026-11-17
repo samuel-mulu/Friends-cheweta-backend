@@ -51,11 +51,11 @@ services:
         value: 15m
       - key: JWT_REFRESH_TTL
         value: 30d
-      - key: LUDO_MAX_CONSECUTIVE_TIMEOUTS
+      - key: GAME_MAX_CONSECUTIVE_TIMEOUTS
         value: "3"
-      - key: LUDO_DISCONNECT_GRACE_SECONDS
+      - key: GAME_DISCONNECT_GRACE_SECONDS
         value: "90"
-      - key: LUDO_READY_NO_SHOW_SECONDS
+      - key: GAME_READY_NO_SHOW_SECONDS
         value: "180"
       - key: PREMATCH_ORPHAN_TIMEOUT_SECONDS
         value: "600"

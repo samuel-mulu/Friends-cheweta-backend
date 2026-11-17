@@ -18,17 +18,13 @@ import { DamaTurnTimerService } from './dama-turn-timer.service';
 @UseFilters(new WsAckExceptionFilter())
 export class DamaGateway extends TurnGameGateway<DamaMatchRuntimeState, DamaRuntimeCommand, DamaRuntimeEvent> {
   constructor(
-    private readonly dama: DamaRuntimeService,
+    runtime: DamaRuntimeService,
     timer: DamaTurnTimerService,
     publisher: RealtimePublisherService,
     chat: ChatService,
     private readonly bots: DamaBotDriverService,
   ) {
-    super(dama, timer, publisher, chat);
-  }
-
-  protected override snapshotExtras(state: DamaMatchRuntimeState) {
-    return { legalMoves: this.dama.legalMoves(state) };
+    super(runtime, timer, publisher, chat);
   }
 
   protected override onJoined(state: DamaMatchRuntimeState): void {

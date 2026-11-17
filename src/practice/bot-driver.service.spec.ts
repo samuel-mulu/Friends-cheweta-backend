@@ -4,8 +4,7 @@ import { LudoMatchPhase, LudoTurnPhase, createInitialLudoState } from '../games/
 import { LudoEngine } from '../games/ludo/engine';
 import { LudoMatchRuntimeState } from '../games/ludo/runtime';
 import { MatchStatus } from '../generated/prisma/enums';
-import { LudoRuntimeRepository } from '../realtime/ludo-runtime.repository';
-import { LudoRuntimeService } from '../realtime/ludo-runtime.service';
+import { LudoRuntimeRepository, LudoRuntimeService } from '../realtime/ludo/ludo-runtime.service';
 import { createTestRedis } from '../test-utils/redis-test.util';
 import { BotDriverService, decideBotAction } from './bot-driver.service';
 import { PRACTICE_BOTS } from './practice.constants';
@@ -71,6 +70,7 @@ describe('BotDriverService (full practice game, real Redis runtime)', () => {
         status: MatchStatus.READY as MatchStatus,
         entrySecuredAt: new Date(),
         rulesVersion: 'LUDO_CLASSIC_V2',
+        tokensToWin: 4,
         game: { code: 'LUDO' },
         participants: [
           { userId: 'human', seat: 0 },
@@ -105,7 +105,7 @@ describe('BotDriverService (full practice game, real Redis runtime)', () => {
         redis,
         new LudoRuntimeRepository(redis, config as any),
         new GameEntryService(prisma as any, {} as any),
-        { settleLudoMatch: jest.fn(async () => undefined) } as any,
+        { settleMatchResult: jest.fn(async () => undefined) } as any,
         history as any,
       );
       const published: string[] = [];
@@ -113,9 +113,9 @@ describe('BotDriverService (full practice game, real Redis runtime)', () => {
         prisma as any,
         runtime,
         {
-          publishExecution: (r: any) => published.push(...r.events.map((e: any) => e.type)),
+          publishTurnGame: (r: any) => published.push(...r.events.map((e: any) => e.type)),
         } as any,
-        { afterManualExecution: jest.fn(async () => undefined) } as any,
+        { afterCommand: jest.fn(async () => undefined) } as any,
       );
       driver.onModuleInit();
 

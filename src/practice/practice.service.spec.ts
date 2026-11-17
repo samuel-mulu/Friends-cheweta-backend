@@ -28,7 +28,7 @@ async function harness() {
       }),
     },
   };
-  const timeouts = { markJoined: jest.fn(async () => undefined) };
+  const timeouts = { markJoined: jest.fn(async () => undefined) }; // MatchJoinTracker
   const service = new PracticeService(prisma as any, ctx.redis, timeouts as any);
   return { ...ctx, service, created, timeouts, setCommitted: (v: any) => (committed = v) };
 }

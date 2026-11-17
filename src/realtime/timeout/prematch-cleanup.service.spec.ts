@@ -1,7 +1,7 @@
 import { MatchEntryStatus, MatchStatus } from '../../generated/prisma/enums';
 import { PREMATCH_ORPHAN_STATUSES } from '../../common/match-status';
 import { GameEntryService } from '../../game-entry/game-entry.service';
-import { TurnTimeoutService } from './turn-timeout.service';
+import { PrematchCleanupService } from './prematch-cleanup.service';
 
 describe('prematch orphan lifecycle', () => {
   function createGameEntryHarness(initial: {
@@ -91,12 +91,32 @@ describe('prematch orphan lifecycle', () => {
     expect(ledger).toHaveLength(0);
   });
 
-  it('processPrematchOrphans cancels old candidates and skips recent WAITING', async () => {
-    const cancelAndRefund = jest.fn(async (matchId: string) => ({
-      matchId,
-      status: MatchStatus.CANCELLED,
-      refunded: true,
-    }));
+  function createCleanup(overrides: { findMany?: jest.Mock; allJoined?: jest.Mock } = {}) {
+    const cancelAndRefund = jest.fn(async (matchId: string) => ({ matchId, status: MatchStatus.CANCELLED, refunded: true }));
+    const findMany = overrides.findMany ?? jest.fn(async () => [{ id: 'old-orphan' }]);
+    const prisma = {
+      match: { findMany },
+      matchParticipant: { findMany: jest.fn(async () => [{ userId: 'u1' }]) },
+    };
+    const publisher = { publishUser: jest.fn() };
+    const ludoTimer = { discard: jest.fn(async () => undefined), allJoined: overrides.allJoined ?? jest.fn(async () => true) };
+    const damaTimer = { discard: jest.fn(async () => undefined), allJoined: jest.fn(async () => true) };
+    const games = {
+      all: () => [{ definition: { code: 'LUDO' }, timer: ludoTimer }, { definition: { code: 'DAMA' }, timer: damaTimer }],
+      get: (code: string) => (code === 'LUDO' ? { timer: ludoTimer } : code === 'DAMA' ? { timer: damaTimer } : undefined),
+    };
+    const config = {
+      get: jest.fn((key: string) => {
+        if (key === 'PREMATCH_ORPHAN_TIMEOUT_SECONDS') return 600;
+        if (key === 'GAME_READY_NO_SHOW_SECONDS') return 180;
+        return 3;
+      }),
+    };
+    const service = new PrematchCleanupService(prisma as any, { cancelAndRefund } as any, publisher as any, games as any, config as any);
+    return { service, cancelAndRefund, findMany, publisher, ludoTimer, damaTimer };
+  }
+
+  it('processPrematchOrphans cancels old candidates, discards every game runtime, and skips recent WAITING', async () => {
     const findMany = jest.fn(async ({ where }: any) => {
       // recent WAITING would fail createdAt < cutoff and never appear here
       expect(where.status.in).toEqual(PREMATCH_ORPHAN_STATUSES);
@@ -104,50 +124,12 @@ describe('prematch orphan lifecycle', () => {
       expect(where.startedAt).toBeNull();
       return [{ id: 'old-orphan' }];
     });
-    const prisma = {
-      match: { findMany },
-      matchParticipant: { findMany: jest.fn(async () => [{ userId: 'u1' }]) },
-    };
-    const redis = {
-      raw: () => ({
-        multi: () => {
-          const chain: any = {
-            del: () => chain,
-            zRem: () => chain,
-            exec: async () => undefined,
-          };
-          return chain;
-        },
-      }),
-      key: (...parts: string[]) => parts.join(':'),
-    };
-    const publisher = { publishUser: jest.fn() };
-    const runtime = { discardRuntime: jest.fn(async () => undefined) };
-    const dama = { discard: jest.fn(async () => undefined) };
-    const config = {
-      get: jest.fn((key: string) => {
-        if (key === 'PREMATCH_ORPHAN_TIMEOUT_SECONDS') return 600;
-        if (key === 'LUDO_READY_NO_SHOW_SECONDS') return 180;
-        if (key === 'LUDO_DISCONNECT_GRACE_SECONDS') return 90;
-        return 3;
-      }),
-    };
-    const service = new TurnTimeoutService(
-      redis as any,
-      prisma as any,
-      runtime as any,
-      {} as any,
-      publisher as any,
-      { cancelAndRefund } as any,
-      config as any,
-      dama as any,
-      dama as any, // Karta's timer has the same discard()
-    );
+    const { service, cancelAndRefund, publisher, ludoTimer, damaTimer } = createCleanup({ findMany });
 
     const cancelled = await service.processPrematchOrphans();
     expect(cancelled).toBe(1);
-    expect(runtime.discardRuntime).toHaveBeenCalledWith('old-orphan');
-    expect(dama.discard).toHaveBeenCalledWith('old-orphan');
+    expect(ludoTimer.discard).toHaveBeenCalledWith('old-orphan');
+    expect(damaTimer.discard).toHaveBeenCalledWith('old-orphan');
     expect(publisher.publishUser).toHaveBeenCalledWith('u1', 'match:cancelled', expect.objectContaining({ matchId: 'old-orphan' }), 'old-orphan');
     expect(cancelAndRefund).toHaveBeenCalledWith('old-orphan', 'PREMATCH_ORPHAN_TIMEOUT', {
       expectedStatuses: PREMATCH_ORPHAN_STATUSES,
@@ -158,5 +140,19 @@ describe('prematch orphan lifecycle', () => {
     cancelAndRefund.mockClear();
     expect(await service.processPrematchOrphans()).toBe(0);
     expect(cancelAndRefund).not.toHaveBeenCalled();
+  });
+
+  it('processReadyNoShows refunds a READY match only when someone never opened it', async () => {
+    const findMany = jest.fn(async () => [
+      { id: 'joined', game: { code: 'LUDO' } },
+      { id: 'no-show', game: { code: 'LUDO' } },
+      { id: 'unknown-game', game: { code: 'CHESS' } },
+    ]);
+    const allJoined = jest.fn(async (matchId: string) => matchId === 'joined');
+    const { service, cancelAndRefund } = createCleanup({ findMany, allJoined });
+
+    await service.processReadyNoShows();
+    expect(cancelAndRefund).toHaveBeenCalledTimes(1);
+    expect(cancelAndRefund).toHaveBeenCalledWith('no-show', 'MATCH_READY_NO_SHOW', undefined);
   });
 });

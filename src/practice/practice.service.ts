@@ -11,7 +11,7 @@ import { Prisma } from '../generated/prisma/client';
 import { MatchEntryStatus, MatchStatus, UserStatus } from '../generated/prisma/enums';
 import { generateSessionCode } from '../match-creation/match-creation.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { TurnTimeoutService } from '../realtime/timeout/turn-timeout.service';
+import { MatchJoinTracker } from '../realtime/match-join-tracker';
 import { RedisService } from '../redis/redis.service';
 import {
   PRACTICE_BOTS,
@@ -44,7 +44,7 @@ export class PracticeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
-    private readonly timeouts: TurnTimeoutService,
+    private readonly joins: MatchJoinTracker,
   ) {}
 
   async start(
@@ -113,7 +113,7 @@ export class PracticeService {
         // Ludo practice always uses the current rules; Dama uses its mode's.
         const rulesVersion = game === 'LUDO' ? PRACTICE_RULES_VERSION : mode.rulesVersion;
         const match = await this.createMatch(userId, bot.id, mode, rulesVersion, tokensToWin);
-        await this.timeouts.markJoined(match.id, bot.id);
+        await this.joins.markJoined(match.id, bot.id); // the bot is always "in the room"
         const result: PracticeStartResult = {
           matchId: match.id,
           gameCode: game,

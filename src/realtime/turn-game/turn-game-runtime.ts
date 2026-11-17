@@ -161,6 +161,11 @@ export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand,
     }
   }
 
+  /** True while the match can still be cancelled and refunded (nobody has really played yet). */
+  private stillCancellable(state: S): boolean {
+    return this.definition.isPreGame?.(state) ?? state.game.version === 0;
+  }
+
   private async persistAfterCommit(matchId: string, commandId: string, execution: TurnGameExecution<S, E>): Promise<void> {
     try {
       await this.history.persistExecution({ matchId, commandId, state: execution.state, events: execution.events });
@@ -175,7 +180,7 @@ export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand,
     const existing = await this.store.getSnapshot(matchId);
     if (existing) {
       // Only a match nobody has acted in yet can still be cancelled (refund).
-      if (existing.game.version === 0) await this.gameEntry.assertPlayable(matchId);
+      if (this.stillCancellable(existing)) await this.gameEntry.assertPlayable(matchId);
       return existing;
     }
 
@@ -209,10 +214,19 @@ export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand,
     await this.gameEntry.assertPlayable(matchId);
 
     const ids = match.participants.map((participant) => participant.userId);
-    if (ids.length !== 2) throw new ServiceUnavailableException({ code: 'NEEDS_TWO_PLAYERS', message: 'This game needs two players.' });
-    const initial = this.definition.create(match.id, ids, match.rulesVersion);
+    const min = this.definition.minPlayers ?? 2;
+    const max = this.definition.maxPlayers ?? 2;
+    if (ids.length < min || ids.length > max) {
+      throw new ServiceUnavailableException({
+        code: 'INVALID_PLAYER_COUNT',
+        message: `This game needs ${min === max ? min : `${min} to ${max}`} players.`,
+      });
+    }
+    const initial = this.definition.create(match.id, ids, match.rulesVersion, { tokensToWin: match.tokensToWin });
+    // Players joining at once all reach here; one snapshot wins, and only its
+    // creator (who gets its own object back) writes the first checkpoint.
     const state = await this.store.saveSnapshotIfAbsent(matchId, initial);
-    await this.history.saveCheckpoint(matchId, state);
+    if (state === initial) await this.history.saveCheckpoint(matchId, state);
     return state;
   }
 
@@ -237,7 +251,7 @@ export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand,
   private async syncMatchStatus(state: S): Promise<void> {
     const { game } = state;
     const finished = this.definition.isFinished(state);
-    if (!finished && game.version === 0) return; // nobody has acted yet
+    if (!finished && this.stillCancellable(state)) return; // nobody has acted yet
 
     await this.prisma.match.updateMany({
       where: { id: game.matchId, status: MatchStatus.READY, entrySecuredAt: { not: null } },

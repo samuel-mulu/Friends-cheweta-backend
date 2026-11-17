@@ -17,6 +17,7 @@ import { MatchHistoryService } from '../../match-history/match-history.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { SettlementService } from '../../settlement/settlement.service';
+import { MatchJoinTracker } from '../match-join-tracker';
 import { RealtimePublisherService } from '../realtime-publisher.service';
 import { RuntimeStore } from '../runtime-store';
 import { TurnGameDefinition } from '../turn-game/turn-game.definition';
@@ -87,8 +88,9 @@ export class KartaTurnTimerService extends TurnGameTimer<KartaMatchRuntimeState,
     redis: RedisService,
     prisma: PrismaService,
     publisher: RealtimePublisherService,
+    joins: MatchJoinTracker,
     config: ConfigService<AppEnv, true>,
   ) {
-    super(runtime, redis, prisma, publisher, config.get('LUDO_MAX_CONSECUTIVE_TIMEOUTS', { infer: true }));
+    super(runtime, redis, prisma, publisher, joins, config.get('GAME_MAX_CONSECUTIVE_TIMEOUTS', { infer: true }));
   }
 }

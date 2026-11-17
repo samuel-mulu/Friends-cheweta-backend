@@ -3,9 +3,8 @@ import { LudoMatchPhase, LudoTurnPhase } from '../games/ludo/domain';
 import { LudoEngine } from '../games/ludo/engine';
 import { LudoMatchRuntimeState, LudoRuntimeCommand } from '../games/ludo/runtime';
 import { PrismaService } from '../prisma/prisma.service';
-import { LudoRuntimeService } from '../realtime/ludo-runtime.service';
+import { LudoRuntimeService, LudoTurnTimerService } from '../realtime/ludo/ludo-runtime.service';
 import { RealtimePublisherService } from '../realtime/realtime-publisher.service';
-import { TurnTimeoutService } from '../realtime/timeout/turn-timeout.service';
 import { BotLevelCache } from './bot-levels';
 import { PracticeLevel, practiceBot } from './practice.constants';
 
@@ -49,7 +48,7 @@ export function decideBotAction(
 }
 
 /**
- * Plays bot turns in practice matches through the normal authoritative
+ * Plays bot turns in Ludo practice matches through the normal authoritative
  * runtime (same validation, events, timers and persistence as a person).
  * Reacts to every committed command and to a player joining; turn timeouts
  * remain the safety net if a scheduled bot action is lost (e.g. restart).
@@ -68,7 +67,7 @@ export class BotDriverService implements OnModuleInit, OnModuleDestroy {
     prisma: PrismaService,
     private readonly runtime: LudoRuntimeService,
     private readonly publisher: RealtimePublisherService,
-    private readonly timeouts: TurnTimeoutService,
+    private readonly timer: LudoTurnTimerService,
   ) {
     this.bots = new BotLevelCache(prisma);
   }
@@ -113,8 +112,8 @@ export class BotDriverService implements OnModuleInit, OnModuleDestroy {
         ...(action.tokenId ? { tokenId: action.tokenId } : {}),
       } as LudoRuntimeCommand & { matchId: string };
       const result = await this.runtime.execute(command);
-      this.publisher.publishExecution(result);
-      await this.timeouts.afterManualExecution(result.state, action.playerId);
+      this.publisher.publishTurnGame(result, this.runtime.definition);
+      await this.timer.afterCommand(result.state, action.playerId);
     } catch (error) {
       // Usually a race with the player or a timeout (version conflict); the
       // next committed command or the turn timer brings the bot back.

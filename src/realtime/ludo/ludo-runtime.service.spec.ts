@@ -1,8 +1,7 @@
-import { GameEntryService } from '../game-entry/game-entry.service';
-import { MatchStatus } from '../generated/prisma/enums';
-import { createTestRedis } from '../test-utils/redis-test.util';
-import { LudoRuntimeRepository } from './ludo-runtime.repository';
-import { LudoRuntimeService } from './ludo-runtime.service';
+import { GameEntryService } from '../../game-entry/game-entry.service';
+import { MatchStatus } from '../../generated/prisma/enums';
+import { createTestRedis } from '../../test-utils/redis-test.util';
+import { LudoRuntimeRepository, LudoRuntimeService } from './ludo-runtime.service';
 
 const MATCH = 'match-1';
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -13,7 +12,8 @@ async function createHarness() {
     id: MATCH,
     status: MatchStatus.READY as MatchStatus,
     entrySecuredAt: new Date(),
-    rulesVersion: 'LUDO_CLASSIC_V1',
+    rulesVersion: 'LUDO_CLASSIC_V3',
+    tokensToWin: 4,
     game: { code: 'LUDO' },
     participants: [
       { userId: 'A', seat: 0 },
@@ -42,7 +42,7 @@ async function createHarness() {
     saveCheckpoint: jest.fn(async () => undefined),
     getCheckpoint: jest.fn(async () => null),
   };
-  const settlement = { settleLudoMatch: jest.fn(async () => undefined) };
+  const settlement = { settleMatchResult: jest.fn(async () => undefined), settleDraw: jest.fn(async () => undefined) };
   const config = { get: (key: string) => (key.startsWith('REDIS_') ? 3600 : undefined) };
   const repository = new LudoRuntimeRepository(redis, config as any);
   const service = new LudoRuntimeService(
@@ -59,6 +59,8 @@ async function createHarness() {
     repository,
     match,
     history,
+    settlement,
+    prisma,
     cleanup,
     slowDb: (ms: number) => (dbDelayMs = ms),
     /** Database reads so far (match + participant lookups). */
@@ -66,7 +68,7 @@ async function createHarness() {
   };
 }
 
-describe('LudoRuntimeService (real Redis)', () => {
+describe('LudoRuntimeService on the shared turn-game runtime (real Redis)', () => {
   let h: Awaited<ReturnType<typeof createHarness>>;
   beforeEach(async () => {
     h = await createHarness();
@@ -88,12 +90,16 @@ describe('LudoRuntimeService (real Redis)', () => {
       expectedVersion,
     });
 
-  it('concurrent first joins share one snapshot', async () => {
+  it('concurrent first joins share one snapshot, created with the match options', async () => {
     const [a, b] = await Promise.all([
       h.service.getSnapshot(MATCH, 'A'),
       h.service.getSnapshot(MATCH, 'B'),
     ]);
     expect(a).toEqual(b);
+    expect(a.game.rulesVersion).toBe('LUDO_CLASSIC_V3');
+    expect(a.game.tokensToWin).toBe(4);
+    expect(a.startingRoll.candidatePlayerIds).toEqual(['A', 'B']);
+    expect(h.history.saveCheckpoint).toHaveBeenCalledTimes(1);
   });
 
   it('rejects commands on a cancelled match even while a snapshot is still in Redis', async () => {
@@ -169,14 +175,19 @@ describe('LudoRuntimeService (real Redis)', () => {
     expect(order).toEqual([1, 2]);
   });
 
-  it('does not read the database on the hot path once the match is playing', async () => {
+  it('stays cancellable through the whole starting roll, then stops checking the database', async () => {
     const state = await h.service.getSnapshot(MATCH, 'A');
+    const before = h.calls();
     const a = await rollForStart('A', state.game.version);
+    expect(h.calls()).toBe(before + 1); // pre-game: the match may still be refunded
     await rollForStart('B', a.version);
     await h.service.flushPersistence(MATCH);
     const playing = (await h.service.getStoredSnapshot(MATCH))!;
     if (playing.game.phase !== 'PLAYING') return; // starting-roll tie; covered elsewhere
-    const before = h.calls();
+    expect(h.prisma.match.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: MatchStatus.PLAYING }) }),
+    );
+    const hot = h.calls();
     await h.service.execute({
       matchId: MATCH,
       type: 'ROLL_DICE',
@@ -184,6 +195,22 @@ describe('LudoRuntimeService (real Redis)', () => {
       commandId: 'hot',
       expectedVersion: playing.game.version,
     });
-    expect(h.calls()).toBe(before);
+    expect(h.calls()).toBe(hot);
+  });
+
+  it('a resignation finishes the match and settles it for the opponent', async () => {
+    const state = await h.service.getSnapshot(MATCH, 'A');
+    const a = await rollForStart('A', state.game.version);
+    const b = await rollForStart('B', a.version);
+    const playing = b.state;
+    if (playing.game.phase !== 'PLAYING') return; // tie
+    const loser = playing.game.currentPlayerId!;
+    const winner = loser === 'A' ? 'B' : 'A';
+    await h.service.execute({ matchId: MATCH, type: 'RESIGN', playerId: loser, commandId: 'resign', expectedVersion: playing.game.version });
+    await h.service.flushPersistence(MATCH);
+    expect(h.settlement.settleMatchResult).toHaveBeenCalledWith(MATCH, [winner, loser]);
+    expect(h.prisma.match.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: MatchStatus.FINISHING, isDraw: false }) }),
+    );
   });
 });

@@ -38,4 +38,5 @@ export const DAMA_GAME: TurnGameDefinition<DamaMatchRuntimeState, DamaRuntimeCom
   resignCommand: () => ({ type: 'RESIGN' }),
   publicState: (state) => state,
   playerInfo: (state, userId) => ({ color: state.game.players.find((p) => p.userId === userId)?.color ?? null }),
+  snapshotExtras: (state) => ({ legalMoves: currentLegalMoves(state) }),
 };

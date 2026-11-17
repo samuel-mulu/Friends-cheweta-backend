@@ -2,8 +2,6 @@ import { ConflictException, Injectable, Logger, NotFoundException } from '@nestj
 import { Prisma } from '../generated/prisma/client';
 import { MatchEntryStatus, MatchStatus, WalletTransactionType } from '../generated/prisma/enums';
 import { withFinancialTiming } from '../common/utils/financial-instrumentation.util';
-import { LudoMatchPhase } from '../games/ludo/domain';
-import { LudoMatchRuntimeState } from '../games/ludo/runtime';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RiskService } from '../risk/risk.service';
@@ -31,16 +29,6 @@ export class SettlementService {
     private readonly risk: RiskService,
     private readonly stats: StatsService,
   ) {}
-
-  settleLudoMatch(state: LudoMatchRuntimeState) {
-    if (state.game.phase !== LudoMatchPhase.FINISHED || state.game.winnerOrder.length === 0) {
-      throw new ConflictException({
-        code: 'MATCH_RESULT_NOT_FINAL',
-        message: 'Match result is not final.',
-      });
-    }
-    return this.settleMatchResult(state.game.matchId, state.game.winnerOrder);
-  }
 
   async settleMatchResult(matchId: string, winnerOrder: string[]) {
     if (winnerOrder.length === 0 || new Set(winnerOrder).size !== winnerOrder.length) {

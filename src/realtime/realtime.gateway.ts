@@ -23,7 +23,6 @@ import {
 import { ChallengeAcceptFailedError } from '../challenge/challenge.types';
 import { ChatService } from '../chat/chat.service';
 import { DirectChatService } from '../chat/direct-chat.service';
-import { BotDriverService } from '../practice/bot-driver.service';
 import { PracticeStartDto } from '../practice/dto/practice.dto';
 import { PracticeService } from '../practice/practice.service';
 import {
@@ -34,26 +33,21 @@ import {
   MatchReactionDto,
   MatchChatSendDto,
 } from '../chat/dto/chat.dto';
-import { boardOf } from '../games/ludo/domain';
-import { LudoRuntimeCommand } from '../games/ludo/runtime';
 import { LobbyCommandDto, LobbyJoinDto } from '../lobby/dto/lobby.dto';
 import { LobbyService } from '../lobby/lobby.service';
-import { MatchJoinDto, LudoCommandDto, LudoMoveCommandDto } from './dto/ludo-command.dto';
-import { LudoRuntimeService } from './ludo-runtime.service';
 import { PresenceService } from './presence.service';
 import { ADMIN_OPERATIONS_ROOM, RealtimePublisherService } from './realtime-publisher.service';
 import { RealtimeAuthService } from './realtime-auth.service';
-import { TurnTimeoutService } from './timeout/turn-timeout.service';
-import {
-  AuthenticatedSocket,
-  CommandAck,
-  REALTIME_PROTOCOL_VERSION,
-  RealtimeEnvelope,
-  SnapshotAck,
-} from './realtime.types';
+import { DisconnectGraceService } from './timeout/disconnect-grace.service';
+import { AuthenticatedSocket, REALTIME_PROTOCOL_VERSION, RealtimeEnvelope } from './realtime.types';
 import { WsAckExceptionFilter } from './ws-ack-exception.filter';
 import { toErrorAck, toErrorPayload } from './ws-errors';
 
+/**
+ * Connection, presence, lobby, challenges, chat, practice and admin on the
+ * `/game` namespace. Each game's match commands live in its own gateway
+ * (LudoGateway, DamaGateway, KartaGateway) on the same namespace.
+ */
 @WebSocketGateway({ namespace: '/game' })
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
 @UseFilters(new WsAckExceptionFilter())
@@ -66,15 +60,13 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   constructor(
     private readonly auth: RealtimeAuthService,
     private readonly presence: PresenceService,
-    private readonly ludoRuntime: LudoRuntimeService,
     private readonly lobby: LobbyService,
     private readonly challenge: ChallengeService,
     private readonly chat: ChatService,
     private readonly directChat: DirectChatService,
     private readonly practice: PracticeService,
-    private readonly botDriver: BotDriverService,
     private readonly publisher: RealtimePublisherService,
-    private readonly timeouts: TurnTimeoutService,
+    private readonly disconnects: DisconnectGraceService,
   ) {}
 
   afterInit(server: Server): void {
@@ -88,7 +80,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       socket.data.user = user;
       await socket.join(this.publisher.userRoom(user.id));
       await this.presence.connected(user.id, socket.id);
-      await this.timeouts.onConnected(user.id);
+      await this.disconnects.onConnected(user.id);
       socket.data.presenceTimer = setInterval(() => {
         void this.presence.heartbeat(user.id, socket.id);
         void this.lobby.touch(user.id).catch(() => undefined);
@@ -106,7 +98,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     const becameOffline = await this.presence.disconnected(socket.data.user.id, socket.id).catch(() => false);
     if (becameOffline) {
       await this.handleLobbyDisconnect(socket.data.user.id).catch(() => undefined);
-      await this.timeouts.onDisconnected(socket.data.user.id).catch(() => undefined);
+      await this.disconnects.onDisconnected(socket.data.user.id).catch(() => undefined);
     }
   }
 
@@ -341,35 +333,6 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
-  @SubscribeMessage('match:join')
-  async joinMatch(
-    @ConnectedSocket() socket: AuthenticatedSocket,
-    @MessageBody() dto: MatchJoinDto,
-  ): Promise<SnapshotAck> {
-    try {
-      const user = this.requireUser(socket);
-      const state = await this.ludoRuntime.getSnapshot(dto.matchId, user.id);
-      await socket.join(this.publisher.matchRoom(dto.matchId));
-      const timing = await this.timeouts.onMatchJoined(dto.matchId, user.id, state);
-      const participants = await this.ludoRuntime.getParticipantViews(dto.matchId, state);
-      const recentMessages = await this.chat.getMatchHistory(dto.matchId).catch(() => []);
-      const legalMoves = this.ludoRuntime.previewMoves(state);
-      void this.botDriver.consider(state); // practice: a bot may need to roll first
-      return {
-        ok: true,
-        state,
-        timing,
-        version: state.game.version,
-        participants,
-        recentMessages,
-        legalMoves,
-        board: boardOf(state.game),
-      };
-    } catch (error) {
-      return this.errorAck(error);
-    }
-  }
-
   @SubscribeMessage('match:chat:send')
   async sendMatchChat(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: MatchChatSendDto): Promise<any> {
     try {
@@ -451,76 +414,6 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       const user = this.requireUser(socket);
       const messages = await this.chat.getMatchHistoryForUser(user.id, dto.matchId);
       return { ok: true, messages };
-    } catch (error) {
-      return this.errorAck(error);
-    }
-  }
-
-  @SubscribeMessage('ludo:sync')
-  async sync(
-    @ConnectedSocket() socket: AuthenticatedSocket,
-    @MessageBody() dto: MatchJoinDto,
-  ): Promise<SnapshotAck> {
-    try {
-      const user = this.requireUser(socket);
-      const state = await this.ludoRuntime.getSnapshot(dto.matchId, user.id);
-      const timing = await this.timeouts.getTiming(dto.matchId, state);
-      const participants = await this.ludoRuntime.getParticipantViews(dto.matchId, state);
-      const legalMoves = this.ludoRuntime.previewMoves(state);
-      return { ok: true, state, timing, version: state.game.version, participants, legalMoves, board: boardOf(state.game) };
-    } catch (error) {
-      return this.errorAck(error);
-    }
-  }
-
-  @SubscribeMessage('ludo:roll_for_start')
-  rollForStart(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: LudoCommandDto): Promise<CommandAck> {
-    return this.executeLudo(socket, dto, { type: 'ROLL_FOR_START' });
-  }
-
-  @SubscribeMessage('ludo:roll')
-  roll(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: LudoCommandDto): Promise<CommandAck> {
-    return this.executeLudo(socket, dto, { type: 'ROLL_DICE' });
-  }
-
-  @SubscribeMessage('ludo:move')
-  move(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: LudoMoveCommandDto): Promise<CommandAck> {
-    return this.executeLudo(socket, dto, { type: 'MOVE_TOKEN', tokenId: dto.tokenId });
-  }
-
-  @SubscribeMessage('ludo:resign')
-  resign(@ConnectedSocket() socket: AuthenticatedSocket, @MessageBody() dto: LudoCommandDto): Promise<CommandAck> {
-    return this.executeLudo(socket, dto, { type: 'RESIGN' });
-  }
-
-  private async executeLudo(
-    socket: AuthenticatedSocket,
-    dto: LudoCommandDto,
-    commandData: { type: LudoRuntimeCommand['type']; tokenId?: string },
-  ): Promise<CommandAck> {
-    try {
-      const user = this.requireUser(socket);
-      if (!socket.rooms.has(this.publisher.matchRoom(dto.matchId))) throw new Error('MATCH_ROOM_NOT_JOINED');
-      if (commandData.type === 'ROLL_FOR_START') await this.timeouts.assertAllParticipantsJoined(dto.matchId);
-      const command = {
-        type: commandData.type,
-        commandId: dto.commandId,
-        playerId: user.id,
-        expectedVersion: dto.expectedVersion,
-        ...(commandData.tokenId ? { tokenId: commandData.tokenId } : {}),
-        matchId: dto.matchId,
-      } as LudoRuntimeCommand & { matchId: string };
-
-      const result = await this.ludoRuntime.execute(command);
-      this.publisher.publishExecution(result);
-      if (!result.duplicate) await this.timeouts.afterManualExecution(result.state, user.id);
-
-      return {
-        ok: true,
-        commandId: dto.commandId,
-        version: result.state.game.version,
-        duplicate: result.duplicate,
-      };
     } catch (error) {
       return this.errorAck(error);
     }

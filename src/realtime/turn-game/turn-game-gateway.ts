@@ -21,11 +21,6 @@ export abstract class TurnGameGateway<S extends TurnGameState, C extends TurnGam
     protected readonly chat: ChatService,
   ) {}
 
-  /** Extra fields for join/sync acks (e.g. Dama's legal moves). */
-  protected snapshotExtras(_state: S): Record<string, unknown> {
-    return {};
-  }
-
   /** Called after a player joins (e.g. a practice bot may act first). */
   protected onJoined(_state: S): void {}
 
@@ -57,6 +52,7 @@ export abstract class TurnGameGateway<S extends TurnGameState, C extends TurnGam
     try {
       const user = this.requireUser(socket);
       if (!socket.rooms.has(this.publisher.matchRoom(dto.matchId))) throw new Error('MATCH_ROOM_NOT_JOINED');
+      if (this.runtime.definition.requiresAllJoined?.(body)) await this.timer.assertAllJoined(dto.matchId);
       const result = await this.runtime.execute({
         ...body,
         matchId: dto.matchId,
@@ -78,7 +74,7 @@ export abstract class TurnGameGateway<S extends TurnGameState, C extends TurnGam
       state: this.runtime.definition.publicState(state),
       version: state.game.version,
       participants: await this.runtime.getParticipantViews(matchId, state),
-      ...this.snapshotExtras(state),
+      ...(this.runtime.definition.snapshotExtras?.(state) ?? {}),
     };
   }
 

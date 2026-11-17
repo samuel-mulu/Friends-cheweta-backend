@@ -21,17 +21,29 @@ const envSchema = z.object({
   REDIS_PRESENCE_TTL_SECONDS: z.coerce.number().int().positive().default(90),
   REDIS_LOCK_TTL_MS: z.coerce.number().int().min(1000).max(30000).default(5000),
 
-  LUDO_MAX_CONSECUTIVE_TIMEOUTS: z.coerce.number().int().min(1).max(10).default(3),
-  LUDO_DISCONNECT_GRACE_SECONDS: z.coerce.number().int().min(15).max(600).default(90),
-  LUDO_READY_NO_SHOW_SECONDS: z.coerce.number().int().min(30).max(1800).default(180),
+  // Turn-game clocks (every game: Ludo, Dama, Karta).
+  GAME_MAX_CONSECUTIVE_TIMEOUTS: z.coerce.number().int().min(1).max(10).default(3),
+  GAME_DISCONNECT_GRACE_SECONDS: z.coerce.number().int().min(15).max(600).default(90),
+  GAME_READY_NO_SHOW_SECONDS: z.coerce.number().int().min(30).max(1800).default(180),
   /** Abandoned CREATED/WAITING matches older than matchmaking queue TTL are cancelled/refunded. */
   PREMATCH_ORPHAN_TIMEOUT_SECONDS: z.coerce.number().int().min(60).max(3600).default(600),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
 
+/** Old variable names still accepted (the clocks used to be Ludo-only). */
+const LEGACY_ENV_ALIASES: Record<string, string> = {
+  GAME_MAX_CONSECUTIVE_TIMEOUTS: 'LUDO_MAX_CONSECUTIVE_TIMEOUTS',
+  GAME_DISCONNECT_GRACE_SECONDS: 'LUDO_DISCONNECT_GRACE_SECONDS',
+  GAME_READY_NO_SHOW_SECONDS: 'LUDO_READY_NO_SHOW_SECONDS',
+};
+
 export function validateEnv(config: Record<string, unknown>): AppEnv {
-  const parsed = envSchema.safeParse(config);
+  const merged: Record<string, unknown> = { ...config };
+  for (const [name, legacy] of Object.entries(LEGACY_ENV_ALIASES)) {
+    if (merged[name] === undefined && merged[legacy] !== undefined) merged[name] = merged[legacy];
+  }
+  const parsed = envSchema.safeParse(merged);
   if (!parsed.success) {
     const message = parsed.error.issues
       .map((issue) => `${issue.path.join('.')}: ${issue.message}`)

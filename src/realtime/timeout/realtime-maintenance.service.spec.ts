@@ -4,7 +4,7 @@ async function flushMicrotasks(): Promise<void> {
   await jest.advanceTimersByTimeAsync(0);
 }
 
-describe('RealtimeMaintenanceService (DB5 - independent timers)', () => {
+describe('RealtimeMaintenanceService (independent timers over the game registry)', () => {
   beforeEach(() => {
     jest.useFakeTimers();
   });
@@ -13,10 +13,16 @@ describe('RealtimeMaintenanceService (DB5 - independent timers)', () => {
     jest.useRealTimers();
   });
 
-  function createService() {
-    const timeouts = {
-      processDueTurnTimeouts: jest.fn(async () => undefined),
-      processDueDisconnects: jest.fn(async () => undefined),
+  function createService(options: { timerFails?: boolean } = {}) {
+    const timer = {
+      processDue: jest.fn(async () => {
+        if (options.timerFails) throw new Error('redis hiccup');
+      }),
+    };
+    const runtime = { retryPostCommit: jest.fn(async () => undefined) };
+    const games = { all: () => [{ definition: { code: 'LUDO' }, runtime, timer }, { definition: { code: 'DAMA' }, runtime, timer }] };
+    const disconnects = { processDue: jest.fn(async () => undefined) };
+    const prematch = {
       processReadyNoShows: jest.fn(async () => undefined),
       processPrematchOrphans: jest.fn(async () => 0),
     };
@@ -33,19 +39,19 @@ describe('RealtimeMaintenanceService (DB5 - independent timers)', () => {
     };
 
     const service = new RealtimeMaintenanceService(
-      timeouts as any,
-      settlement as any,
+      games as any,
       { sweep: jest.fn(async () => []) } as any,
+      settlement as any,
       { publishChallengeTransition: jest.fn() } as any,
-      { retryPostCommit: jest.fn(async () => undefined) } as any,
-      { processDue: jest.fn(async () => undefined) } as any,
-      { retryPostCommit: jest.fn(async () => undefined) } as any,
-      { processDue: jest.fn(async () => undefined) } as any,
-      { retryPostCommit: jest.fn(async () => undefined) } as any,
+      disconnects as any,
+      prematch as any,
     );
     return {
       service,
-      timeouts,
+      timer,
+      runtime,
+      disconnects,
+      prematch,
       settlement,
       resolveCurrentReconcile: () => resolveReconcile(),
       getReconcileCallCount: () => reconcileCallCount,
@@ -53,25 +59,24 @@ describe('RealtimeMaintenanceService (DB5 - independent timers)', () => {
   }
 
   it('keeps gameplay maintenance running every second while settlement reconciliation is stuck', async () => {
-    const { service, timeouts, settlement } = createService();
+    const { service, timer, disconnects, prematch, runtime, settlement } = createService();
     service.onModuleInit();
 
     // t=5000ms: 5th gameplay tick and 1st reconciliation tick fire together.
-    // Reconciliation is deliberately left unresolved (simulating a stuck
-    // settlement transaction).
+    // Reconciliation is deliberately left unresolved (a stuck settlement).
     await jest.advanceTimersByTimeAsync(5000);
-    expect(timeouts.processDueTurnTimeouts).toHaveBeenCalledTimes(5);
+    expect(timer.processDue).toHaveBeenCalledTimes(10); // two games × 5 ticks
     expect(settlement.reconcilePending).toHaveBeenCalledTimes(1);
 
-    // t=10000ms: gameplay maintenance must keep ticking every second
-    // regardless - it is on its own timer/guard now, unlike before DB5.
+    // t=10000ms: gameplay keeps ticking every second on its own timer/guard.
     await jest.advanceTimersByTimeAsync(5000);
-    expect(timeouts.processDueTurnTimeouts).toHaveBeenCalledTimes(10);
-    expect(timeouts.processDueDisconnects).toHaveBeenCalledTimes(10);
-    expect(timeouts.processReadyNoShows).toHaveBeenCalledTimes(10);
+    expect(timer.processDue).toHaveBeenCalledTimes(20);
+    expect(disconnects.processDue).toHaveBeenCalledTimes(10);
+    expect(prematch.processReadyNoShows).toHaveBeenCalledTimes(10);
+    expect(prematch.processPrematchOrphans).toHaveBeenCalledTimes(10);
+    expect(runtime.retryPostCommit).toHaveBeenCalledTimes(20);
 
-    // The still-stuck reconciliation must not have been re-entered -
-    // settlementRunning guards against overlap, independent of gameplay.
+    // The still-stuck reconciliation must not have been re-entered.
     expect(settlement.reconcilePending).toHaveBeenCalledTimes(1);
 
     service.onApplicationShutdown();
@@ -94,31 +99,12 @@ describe('RealtimeMaintenanceService (DB5 - independent timers)', () => {
   });
 
   it('a failing gameplay tick does not affect the independent reconciliation timer', async () => {
-    const timeouts = {
-      processDueTurnTimeouts: jest.fn(async () => {
-        throw new Error('redis hiccup');
-      }),
-      processDueDisconnects: jest.fn(async () => undefined),
-      processReadyNoShows: jest.fn(async () => undefined),
-      processPrematchOrphans: jest.fn(async () => 0),
-    };
-    const settlement = { reconcilePending: jest.fn(async () => undefined) };
-    const service = new RealtimeMaintenanceService(
-      timeouts as any,
-      settlement as any,
-      { sweep: jest.fn(async () => []) } as any,
-      { publishChallengeTransition: jest.fn() } as any,
-      { retryPostCommit: jest.fn(async () => undefined) } as any,
-      { processDue: jest.fn(async () => undefined) } as any,
-      { retryPostCommit: jest.fn(async () => undefined) } as any,
-      { processDue: jest.fn(async () => undefined) } as any,
-      { retryPostCommit: jest.fn(async () => undefined) } as any,
-    );
+    const { service, timer, settlement } = createService({ timerFails: true });
     service.onModuleInit();
 
     await jest.advanceTimersByTimeAsync(5000);
 
-    expect(timeouts.processDueTurnTimeouts).toHaveBeenCalledTimes(5);
+    expect(timer.processDue).toHaveBeenCalledTimes(5); // first game throws each tick
     expect(settlement.reconcilePending).toHaveBeenCalledTimes(1);
 
     service.onApplicationShutdown();
