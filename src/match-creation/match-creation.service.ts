@@ -178,9 +178,12 @@ export class MatchCreationService {
         )
           continue;
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-          const target = Array.isArray(error.meta?.target)
-            ? error.meta?.target.join(',')
-            : String(error.meta?.target ?? '');
+          const rawTarget = error.meta?.target;
+          const target = Array.isArray(rawTarget)
+            ? rawTarget.join(',')
+            : typeof rawTarget === 'string'
+              ? rawTarget
+              : '';
           if (
             (input.challengeId && target.includes('challengeId')) ||
             (input.matchmakingKey && target.includes('matchmakingKey'))

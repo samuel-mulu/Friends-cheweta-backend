@@ -8,11 +8,11 @@ import { ArgumentsHost, BadRequestException, Catch, ExceptionFilter } from '@nes
 @Catch(BadRequestException)
 export class WsAckExceptionFilter implements ExceptionFilter {
   catch(exception: BadRequestException, host: ArgumentsHost): void {
-    const ack = host.getArgByIndex(2);
+    const ack: unknown = host.getArgByIndex(2);
     if (typeof ack !== 'function') return;
     const response = exception.getResponse() as { message?: string | string[] } | string;
     const message = typeof response === 'string' ? response : response.message;
-    ack({
+    (ack as (response: unknown) => void)({
       ok: false,
       code: 'VALIDATION_FAILED',
       message: Array.isArray(message) ? message.join(', ') : (message ?? 'Invalid request.'),

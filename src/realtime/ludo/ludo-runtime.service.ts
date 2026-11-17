@@ -22,7 +22,7 @@ export type LudoExecution = TurnGameExecution<LudoMatchRuntimeState, LudoRuntime
 
 /** Live Ludo matches in Redis (keys `runtime:ludo:*`, lock `lock:ludo-match:*`). */
 @Injectable()
-export class LudoRuntimeRepository extends RuntimeStore<LudoMatchRuntimeState, LudoRuntimeEvent> {
+export class LudoRuntimeRepository extends RuntimeStore<LudoMatchRuntimeState> {
   constructor(redis: RedisService, config: ConfigService<AppEnv, true>) {
     super(
       redis,

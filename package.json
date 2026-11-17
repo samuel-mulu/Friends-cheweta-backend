@@ -11,6 +11,7 @@
     "start:dev:dist": "nest start --watch",
     "start:prod": "node dist/main.js",
     "lint": "eslint \"{src,test,prisma}/**/*.ts\" --fix",
+    "lint:check": "eslint \"{src,test,prisma}/**/*.ts\"",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:e2e": "jest --config ./test/jest-e2e.json",

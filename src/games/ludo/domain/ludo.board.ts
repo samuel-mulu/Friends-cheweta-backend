@@ -1,4 +1,4 @@
-import { LudoBoardRules, LudoRulesVersion, rulesFor } from './ludo.rules';
+import { LudoBoardRules, rulesFor } from './ludo.rules';
 import { LudoColor } from './ludo.types';
 
 export const LUDO_BASE_PROGRESS = -1;
@@ -38,7 +38,7 @@ export function resolveBoard(board: LudoBoardRules): LudoBoardSpec {
 
 const BOARD_CACHE = new Map<string, LudoBoardSpec>();
 
-export function boardFor(rulesVersion: LudoRulesVersion | string): LudoBoardSpec {
+export function boardFor(rulesVersion: string): LudoBoardSpec {
   const cached = BOARD_CACHE.get(rulesVersion);
   if (cached) return cached;
   const spec = resolveBoard(rulesFor(rulesVersion).board);

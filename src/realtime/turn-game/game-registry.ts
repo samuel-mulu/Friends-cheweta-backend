@@ -2,7 +2,6 @@ import { TurnGameDefinition } from './turn-game.definition';
 import { TurnGameRuntime } from './turn-game-runtime';
 import { TurnGameTimer } from './turn-game-timer';
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 // `any` on purpose: a registry entry is used only through the game-agnostic
 // methods (processDue, discard, allJoined, forfeitAbsent, retryPostCommit).
 export type AnyTurnGameDefinition = TurnGameDefinition<any, any, any>;

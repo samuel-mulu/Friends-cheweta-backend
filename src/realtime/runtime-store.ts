@@ -11,7 +11,7 @@ export type StoredCommandRecord = {
  * per-command idempotency records and the per-match lock key. Keys are
  * namespaced by game (`runtime:<game>:<matchId>:…`).
  */
-export class RuntimeStore<TState, TEvent> {
+export class RuntimeStore<TState> {
   constructor(
     protected readonly redis: RedisService,
     private readonly game: string,
@@ -45,12 +45,10 @@ export class RuntimeStore<TState, TEvent> {
 
   /** Store only if no snapshot exists; returns the snapshot that is now authoritative. */
   async saveSnapshotIfAbsent(matchId: string, state: TState): Promise<TState> {
-    const created = await this.redis
-      .raw()
-      .set(this.snapshotKey(matchId), JSON.stringify(state), {
-        NX: true,
-        EX: this.runtimeTtlSeconds,
-      });
+    const created = await this.redis.raw().set(this.snapshotKey(matchId), JSON.stringify(state), {
+      NX: true,
+      EX: this.runtimeTtlSeconds,
+    });
     if (created === 'OK') return state;
     return (await this.getSnapshot(matchId)) ?? state;
   }

@@ -63,10 +63,7 @@ export const KARTA_GAME: TurnGameDefinition<
 };
 
 @Injectable()
-export class KartaRuntimeRepository extends RuntimeStore<
-  KartaMatchRuntimeState,
-  KartaRuntimeEvent
-> {
+export class KartaRuntimeRepository extends RuntimeStore<KartaMatchRuntimeState> {
   constructor(redis: RedisService, config: ConfigService<AppEnv, true>) {
     super(
       redis,

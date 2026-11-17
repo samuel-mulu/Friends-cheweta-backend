@@ -37,7 +37,7 @@ export class RedisService implements OnModuleInit, OnApplicationShutdown {
     this.logger.log(`Connecting to Redis host ${redisHostForLogs(redisUrl)} (${nodeEnv})`);
 
     this.client = createClient(buildRedisClientOptions(redisUrl));
-    this.client.on('error', (error) => this.logger.error(`Redis error: ${error.message}`));
+    this.client.on('error', (error: Error) => this.logger.error(`Redis error: ${error.message}`));
   }
 
   async onModuleInit(): Promise<void> {
@@ -62,7 +62,9 @@ export class RedisService implements OnModuleInit, OnApplicationShutdown {
 
   async createConnectedDuplicate(): Promise<RedisClient> {
     const duplicate = this.client.duplicate();
-    duplicate.on('error', (error) => this.logger.error(`Redis duplicate error: ${error.message}`));
+    duplicate.on('error', (error: Error) =>
+      this.logger.error(`Redis duplicate error: ${error.message}`),
+    );
     await duplicate.connect();
     return duplicate;
   }

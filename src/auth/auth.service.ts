@@ -204,7 +204,7 @@ export class AuthService {
     const payload: AccessTokenPayload = { sub: userId, role };
     return this.jwtService.signAsync(payload, {
       secret: this.config.get('JWT_ACCESS_SECRET', { infer: true }),
-      expiresIn: this.config.get('JWT_ACCESS_TTL', { infer: true }) as any,
+      expiresIn: this.config.get('JWT_ACCESS_TTL', { infer: true }),
     });
   }
 
@@ -212,7 +212,7 @@ export class AuthService {
     const payload: RefreshTokenPayload = { sub: userId, sid: sessionId, type: 'refresh' };
     return this.jwtService.signAsync(payload, {
       secret: this.config.get('JWT_REFRESH_SECRET', { infer: true }),
-      expiresIn: this.config.get('JWT_REFRESH_TTL', { infer: true }) as any,
+      expiresIn: this.config.get('JWT_REFRESH_TTL', { infer: true }),
     });
   }
 

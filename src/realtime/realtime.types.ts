@@ -1,6 +1,6 @@
 import type { LudoBoardSpec } from '../games/ludo/domain';
 import type { LudoMovePreview } from '../games/ludo/engine';
-import { Socket } from 'socket.io';
+import { DefaultEventsMap, Socket } from 'socket.io';
 import { UserRole, UserStatus } from '../generated/prisma/enums';
 import { LudoMatchRuntimeState, LudoRuntimeEvent } from '../games/ludo/runtime';
 import type { TurnTiming } from './turn-game/turn-game-timer';
@@ -15,12 +15,17 @@ export type RealtimeUser = {
   status: UserStatus;
 };
 
-export type AuthenticatedSocket = Socket & {
-  data: {
-    user?: RealtimeUser;
-    presenceTimer?: NodeJS.Timeout;
-  };
+export type SocketData = {
+  user?: RealtimeUser;
+  presenceTimer?: NodeJS.Timeout;
 };
+
+export type AuthenticatedSocket = Socket<
+  DefaultEventsMap,
+  DefaultEventsMap,
+  DefaultEventsMap,
+  SocketData
+>;
 
 export type RealtimeEnvelope<T> = {
   protocolVersion: typeof REALTIME_PROTOCOL_VERSION;

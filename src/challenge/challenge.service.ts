@@ -329,14 +329,14 @@ export class ChallengeService {
     this.logger.log(`challenge_accept_started challenge=${challengeId} command=${commandId}`);
     let match: MatchSummary;
     try {
-      match = (await this.matchCreation.createSecuredMatch({
+      match = await this.matchCreation.createSecuredMatch({
         gameModeId: challenge.gameModeId,
         playerIds: [challenge.challengerId, challenge.opponentId],
         challengeId,
         source: MATCH_SOURCE[challenge.kind ?? 'LOBBY'],
         rematchOfMatchId: challenge.sourceMatchId,
         tokensToWin: challenge.tokensToWin,
-      })) as MatchSummary;
+      });
     } catch (error) {
       // The transaction may have committed even though the call failed.
       const committed = await this.findMatch(challengeId).catch(() => null);
@@ -661,7 +661,7 @@ export class ChallengeService {
   }
 
   private async findMatch(challengeId: string): Promise<MatchSummary | null> {
-    return (await this.matchCreation.findByChallengeId(challengeId)) as MatchSummary | null;
+    return await this.matchCreation.findByChallengeId(challengeId);
   }
 
   private emptyTransition(

@@ -183,7 +183,7 @@ export class PracticeService {
         const sessionCodeTaken =
           error instanceof Prisma.PrismaClientKnownRequestError &&
           error.code === 'P2002' &&
-          String(error.meta?.target ?? '').includes('sessionCode');
+          JSON.stringify(error.meta?.target ?? '').includes('sessionCode');
         if (!sessionCodeTaken || attempt === 2) throw error;
       }
     }

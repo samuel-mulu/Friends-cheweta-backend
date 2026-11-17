@@ -61,7 +61,7 @@ export class TurnGameRuntime<
     readonly definition: TurnGameDefinition<S, C, E>,
     protected readonly prisma: PrismaService,
     protected readonly redis: RedisService,
-    readonly store: RuntimeStore<S, E>,
+    readonly store: RuntimeStore<S>,
     private readonly gameEntry: GameEntryService,
     private readonly settlement: SettlementService,
     private readonly history: MatchHistoryService,
