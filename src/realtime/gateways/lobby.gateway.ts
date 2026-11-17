@@ -55,7 +55,12 @@ export class LobbyGateway {
         await this.lobby.leave(user.id).catch(() => undefined);
         return { ok: true, commandId: dto.commandId, data: { activeMatch } };
       }
-      const result = await this.lobby.joinGame(user.id, dto.gameCode, dto.gameModeId);
+      const result = await this.lobby.joinGame(
+        user.id,
+        dto.gameCode,
+        dto.gameModeId,
+        dto.customStakeMinor,
+      );
       if (result.changed) {
         if (result.previousGameModeId && result.previousGameModeId !== result.gameModeId) {
           await socket.leave(this.publisher.lobbyRoom(result.previousGameModeId));

@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsUUID, Matches } from 'class-validator';
+import { IsInt, IsOptional, IsString, IsUUID, Matches, Max, Min } from 'class-validator';
 
 export class LobbyJoinDto {
   @IsUUID()
@@ -19,6 +19,13 @@ export class LobbyJoinGameDto {
   @IsOptional()
   @IsString()
   gameModeId?: string;
+
+  /** Sit at a custom stake of this amount (minor units) instead. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100_000_000)
+  customStakeMinor?: number;
 }
 
 export class LobbyCommandDto {

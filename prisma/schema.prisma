@@ -233,6 +233,9 @@ model GameMode {
   turnDurationSeconds Int
   rulesVersion        String
   enabled             Boolean  @default(true)
+  /// A stake a player chose in the lobby (not in the catalog). Shown in its
+  /// game's lobby only while someone sits at it.
+  custom              Boolean  @default(false)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 

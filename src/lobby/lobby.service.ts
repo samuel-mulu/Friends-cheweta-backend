@@ -11,6 +11,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { LobbyRooms } from './lobby-rooms';
 import {
+  CUSTOM_STAKE_MAX_MINOR,
+  CUSTOM_STAKE_MIN_MINOR,
   LOBBY_TTL_SECONDS,
   LobbyGameSnapshot,
   LobbyPlayerView,
@@ -48,6 +50,7 @@ export class LobbyService {
     userId: string,
     gameCode: string,
     gameModeId?: string,
+    customStakeMinor?: number,
   ): Promise<{
     gameId: string;
     gameModeId: string;
@@ -57,13 +60,25 @@ export class LobbyService {
     player: LobbyPlayerView;
   }> {
     const game = await this.requireGame(gameCode);
-    const stakeIds = game.modes.map((mode) => mode.id);
-    if (gameModeId && !stakeIds.includes(gameModeId)) {
-      throw new NotFoundException({
-        code: 'LOBBY_INVALID_MODE',
-        message: 'This stake is not open.',
+    let stakes = await this.stakesOf(game);
+    if (customStakeMinor !== undefined) {
+      const custom = await this.customStake(game, customStakeMinor, userId);
+      gameModeId = custom.id;
+      if (!stakes.some((stake) => stake.id === custom.id)) stakes = [...stakes, custom];
+    } else if (gameModeId && !stakes.some((stake) => stake.id === gameModeId)) {
+      // A custom stake nobody sits at any more (e.g. rejoining after a drop).
+      const custom = await this.prisma.gameMode.findFirst({
+        where: { id: gameModeId, gameId: game.id, enabled: true, custom: true },
       });
+      if (!custom) {
+        throw new NotFoundException({
+          code: 'LOBBY_INVALID_MODE',
+          message: 'This stake is not open.',
+        });
+      }
+      stakes = [...stakes, custom];
     }
+    const stakeIds = stakes.map((stake) => stake.id);
     const current = await this.getContext(userId);
     const target =
       gameModeId ??
@@ -80,11 +95,13 @@ export class LobbyService {
       }
       previousGameModeId = (await this.enter(userId, target)).previousGameModeId;
       changed = true;
+      const mode = stakes.find((stake) => stake.id === target);
+      if (mode?.custom) await this.redis.raw().sAdd(this.customStakesKey(game.id), mode.id);
     } else {
       await this.assertUsersActive([userId]);
       await this.touch(userId);
     }
-    const snapshot = await this.gameSnapshot(userId, game);
+    const snapshot = await this.gameSnapshot(userId, game, stakes);
     const [player] = await this.playerViews([userId]);
     return { gameId: game.id, gameModeId: target, previousGameModeId, changed, snapshot, player };
   }
@@ -93,10 +110,12 @@ export class LobbyService {
   async gameSnapshot(
     viewerUserId: string,
     game: Awaited<ReturnType<LobbyService['requireGame']>>,
+    stakesOfGame?: Awaited<ReturnType<LobbyService['stakesOf']>>,
     recentMessages: unknown[] = [],
   ): Promise<LobbyGameSnapshot> {
+    const modes = stakesOfGame ?? (await this.stakesOf(game));
     const perStake = await Promise.all(
-      game.modes.map(async (mode) => {
+      modes.map(async (mode) => {
         const [onlineIds, readyIds] = await Promise.all([
           this.redis.raw().sMembers(this.onlineKey(mode.id)),
           this.redis.raw().zRange(this.readyKey(mode.id), 0, this.snapshotLimit - 1),
@@ -124,20 +143,32 @@ export class LobbyService {
       }
       const live = ids.filter((id) => !stale.includes(id) && allIds.includes(id));
       liveIds.push(...live);
+      if (mode.custom && live.length === 0) {
+        // Nobody sits at this custom stake any more: it leaves the lobby.
+        await this.redis.raw().sRem(this.customStakesKey(game.id), mode.id);
+        continue;
+      }
       stakes.push({
         id: mode.id,
+        code: mode.code,
+        name: mode.name,
         stakeAmountMinor: mode.stakeAmountMinor.toString(),
+        playerCount: mode.playerCount,
+        platformFeeBps: mode.platformFeeBps,
+        turnDurationSeconds: mode.turnDurationSeconds,
+        rulesVersion: mode.rulesVersion,
+        custom: mode.custom,
         onlineCount: live.length,
         readyCount: live.filter((id) => contexts.get(id)?.state === 'READY').length,
       });
     }
 
     const mine = contexts.get(viewerUserId);
-    const inGame = mine && game.modes.some((mode) => mode.id === mine.gameModeId);
+    const inGame = mine && stakes.some((stake) => stake.id === mine.gameModeId);
     return {
       game: { id: game.id, code: game.code, name: game.name },
       stakes,
-      gameModeId: inGame ? mine.gameModeId : game.modes[0].id,
+      gameModeId: inGame ? mine.gameModeId : stakes[0].id,
       myState: inGame ? mine.state : 'ONLINE',
       players: await this.playerViews(liveIds, viewerUserId, contexts),
       recentMessages,
@@ -149,7 +180,9 @@ export class LobbyService {
   async requireGame(gameCode: string) {
     const game = await this.prisma.game.findUnique({
       where: { code: gameCode },
-      include: { modes: { where: { enabled: true }, orderBy: { stakeAmountMinor: 'asc' } } },
+      include: {
+        modes: { where: { enabled: true, custom: false }, orderBy: { stakeAmountMinor: 'asc' } },
+      },
     });
     if (!game)
       throw new NotFoundException({ code: 'LOBBY_INVALID_GAME', message: 'Game does not exist.' });
@@ -163,12 +196,93 @@ export class LobbyService {
     return game;
   }
 
+  /** Catalog stakes plus the custom stakes someone sits at, smallest first. */
+  async stakesOf(game: Awaited<ReturnType<LobbyService['requireGame']>>) {
+    const customIds = await this.redis.raw().sMembers(this.customStakesKey(game.id));
+    const custom = customIds.length
+      ? await this.prisma.gameMode.findMany({
+          where: { id: { in: customIds }, gameId: game.id, enabled: true, custom: true },
+        })
+      : [];
+    for (const mode of custom) this.rooms?.remember(mode.id, game.id);
+    return [...game.modes, ...custom].sort((a, b) =>
+      a.stakeAmountMinor < b.stakeAmountMinor
+        ? -1
+        : a.stakeAmountMinor > b.stakeAmountMinor
+          ? 1
+          : 0,
+    );
+  }
+
+  /**
+   * The stake for an amount a player typed: the catalog stake if one has that
+   * amount, else a custom stake (created once, shared by everyone choosing
+   * it), modelled on the game's smallest catalog stake. The player must hold
+   * the amount.
+   */
+  private async customStake(
+    game: Awaited<ReturnType<LobbyService['requireGame']>>,
+    amountMinor: number,
+    userId: string,
+  ) {
+    if (
+      !Number.isInteger(amountMinor) ||
+      amountMinor % 100 !== 0 ||
+      amountMinor < CUSTOM_STAKE_MIN_MINOR ||
+      amountMinor > CUSTOM_STAKE_MAX_MINOR
+    ) {
+      throw new BadRequestException({
+        code: 'CUSTOM_STAKE_INVALID',
+        message: `Choose a whole amount from ${CUSTOM_STAKE_MIN_MINOR / 100} to ${CUSTOM_STAKE_MAX_MINOR / 100} ETB.`,
+      });
+    }
+    const amount = BigInt(amountMinor);
+    const wallet = await this.prisma.wallet.findUnique({
+      where: { userId },
+      select: { availableBalance: true },
+    });
+    if ((wallet?.availableBalance ?? 0n) < amount) {
+      throw new ConflictException({
+        code: 'INSUFFICIENT_BALANCE_FOR_MATCH',
+        message: 'Available wallet balance is below the game stake.',
+      });
+    }
+    const listed = game.modes.find((mode) => mode.stakeAmountMinor === amount);
+    if (listed) return listed;
+
+    const template = game.modes[0];
+    const code = `${game.code}_CUSTOM_${amountMinor}`;
+    const mode = await this.prisma.gameMode.upsert({
+      where: { code },
+      update: {},
+      create: {
+        gameId: game.id,
+        code,
+        name: `${game.name} 1v1 - ${amountMinor / 100} ETB`,
+        playerCount: template.playerCount,
+        stakeAmountMinor: amount,
+        platformFeeBps: template.platformFeeBps,
+        turnDurationSeconds: template.turnDurationSeconds,
+        rulesVersion: template.rulesVersion,
+        custom: true,
+      },
+    });
+    if (!mode.enabled || !mode.custom) {
+      throw new BadRequestException({
+        code: 'LOBBY_MODE_DISABLED',
+        message: 'This stake is not open.',
+      });
+    }
+    this.rooms?.remember(mode.id, game.id);
+    return mode;
+  }
+
   /** Sit at a stake as ONLINE, leaving any other stake. */
   private async enter(
     userId: string,
     gameModeId: string,
   ): Promise<{ previousGameModeId?: string; player: LobbyPlayerView }> {
-    await this.assertMode(gameModeId);
+    const mode = await this.assertMode(gameModeId);
     await this.assertUsersActive([userId]);
 
     const previous = await this.getContext(userId);
@@ -176,6 +290,7 @@ export class LobbyService {
 
     const context: LobbyUserContext = {
       gameModeId,
+      stakeAmountMinor: mode.stakeAmountMinor.toString(),
       state: 'ONLINE',
       joinedAt: new Date().toISOString(),
     };
@@ -253,6 +368,7 @@ export class LobbyService {
       throw new ConflictException({ code: 'LOBBY_NOT_READY', message: 'You are not ready.' });
     const next: LobbyUserContext = {
       gameModeId: context.gameModeId,
+      stakeAmountMinor: context.stakeAmountMinor,
       state: 'ONLINE',
       joinedAt: context.joinedAt,
     };
@@ -345,6 +461,7 @@ export class LobbyService {
         userId,
         displayName: nameById.get(userId) ?? 'Player',
         gameModeId: context.gameModeId,
+        ...(context.stakeAmountMinor ? { stakeAmountMinor: context.stakeAmountMinor } : {}),
         state: context.state,
         ...(context.readyAt ? { readyAt: context.readyAt } : {}),
         ...(viewerUserId === userId ? { isSelf: true } : {}),
@@ -459,6 +576,11 @@ export class LobbyService {
         message: 'Player is not eligible.',
       });
     }
+  }
+
+  /** Custom stakes of a game that someone sits at (cleaned when empty). */
+  private customStakesKey(gameId: string): string {
+    return this.redis.key('lobby', 'game', gameId, 'custom-stakes');
   }
 
   private onlineKey(gameModeId: string): string {

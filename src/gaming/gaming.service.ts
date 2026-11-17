@@ -43,7 +43,7 @@ export class GamingService {
     }
 
     const modes = await this.prisma.gameMode.findMany({
-      where: { gameId: game.id, enabled: true },
+      where: { gameId: game.id, enabled: true, custom: false },
       orderBy: [{ stakeAmountMinor: 'asc' }, { playerCount: 'asc' }],
     });
     return modes.map((mode) => this.serializeMode(mode));
