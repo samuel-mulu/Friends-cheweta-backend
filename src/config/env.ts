@@ -13,6 +13,12 @@ const envSchema = z.object({
   JWT_ACCESS_TTL: z.string().default('15m'),
   JWT_REFRESH_TTL: z.string().default('30d'),
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
+  /**
+   * Reverse proxies in front of the API (nginx, Render…) whose X-Forwarded-For
+   * is trusted for the client IP. 0 when clients connect directly. Unset: 1
+   * in production, 0 otherwise.
+   */
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).optional(),
 
   REDIS_URL: z.string().min(1).default('redis://localhost:6379'),
   REDIS_KEY_PREFIX: z.string().min(1).default('friends-game'),
@@ -29,7 +35,7 @@ const envSchema = z.object({
   PREMATCH_ORPHAN_TIMEOUT_SECONDS: z.coerce.number().int().min(60).max(3600).default(600),
 });
 
-export type AppEnv = z.infer<typeof envSchema>;
+export type AppEnv = z.infer<typeof envSchema> & { TRUST_PROXY_HOPS: number };
 
 /** Old variable names still accepted (the clocks used to be Ludo-only). */
 const LEGACY_ENV_ALIASES: Record<string, string> = {
@@ -50,5 +56,8 @@ export function validateEnv(config: Record<string, unknown>): AppEnv {
       .join('; ');
     throw new Error(`Invalid environment configuration: ${message}`);
   }
-  return parsed.data;
+  return {
+    ...parsed.data,
+    TRUST_PROXY_HOPS: parsed.data.TRUST_PROXY_HOPS ?? (parsed.data.NODE_ENV === 'production' ? 1 : 0),
+  };
 }

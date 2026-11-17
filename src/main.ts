@@ -1,7 +1,9 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
+import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { buildCorsOptions } from './config/cors.util';
@@ -10,8 +12,13 @@ import { RedisService } from './redis/redis.service';
 import { RedisIoAdapter } from './realtime/redis-io.adapter';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
+  app.useLogger(app.get(Logger));
   const config = app.get(ConfigService<AppEnv, true>);
+
+  // Behind the reverse proxy the client address is in X-Forwarded-For; rate
+  // limits and session records must see it, not the proxy's address.
+  app.set('trust proxy', config.get('TRUST_PROXY_HOPS', { infer: true }));
 
   app.setGlobalPrefix('api');
   app.use(helmet());

@@ -17,7 +17,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const status = exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
     const raw = exception instanceof HttpException ? exception.getResponse() : null;
 
-    let code = status === 500 ? 'INTERNAL_SERVER_ERROR' : 'REQUEST_FAILED';
+    let code = status === 500 ? 'INTERNAL_SERVER_ERROR' : status === 429 ? 'RATE_LIMITED' : 'REQUEST_FAILED';
     let message: string | string[] = status === 500 ? 'Internal server error' : 'Request failed';
     let details: unknown;
 

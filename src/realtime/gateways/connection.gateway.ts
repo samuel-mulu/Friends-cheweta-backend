@@ -3,6 +3,7 @@ import { OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, WebSocketGatew
 import { randomUUID } from 'node:crypto';
 import { Server } from 'socket.io';
 import { ChallengeService } from '../../challenge/challenge.service';
+import { SOCKET_EVENTS_PER_SECOND } from '../../common/rate-limit';
 import { LobbyService } from '../../lobby/lobby.service';
 import { PresenceService } from '../presence.service';
 import { RealtimeAuthService } from '../realtime-auth.service';
@@ -10,6 +11,7 @@ import { RealtimePublisherService } from '../realtime-publisher.service';
 import { AuthenticatedSocket, REALTIME_PROTOCOL_VERSION } from '../realtime.types';
 import { DisconnectGraceService } from '../timeout/disconnect-grace.service';
 import { toErrorPayload } from '../ws-errors';
+import { socketRateLimiter } from './socket-rate-limit';
 
 /**
  * The socket's life on the `/game` namespace: authentication, presence
@@ -35,6 +37,7 @@ export class ConnectionGateway implements OnGatewayInit, OnGatewayConnection, On
   }
 
   async handleConnection(socket: AuthenticatedSocket): Promise<void> {
+    socket.use(socketRateLimiter(SOCKET_EVENTS_PER_SECOND));
     try {
       const user = await this.auth.authenticate(socket);
       socket.data.user = user;

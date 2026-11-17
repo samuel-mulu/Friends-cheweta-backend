@@ -1,5 +1,8 @@
-import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { LoggerModule } from 'nestjs-pino';
 import { AdminModule } from './admin/admin.module';
 import { RiskModule } from './risk/risk.module';
 import { NotificationsModule } from './notifications/notifications.module';
@@ -9,7 +12,8 @@ import { AuthModule } from './auth/auth.module';
 import { ChallengeModule } from './challenge/challenge.module';
 import { ChatModule } from './chat/chat.module';
 import { StatsModule } from './stats/stats.module';
-import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
+import { loggerConfig } from './common/logging/logger.config';
+import { HTTP_RATE_LIMIT } from './common/rate-limit';
 import { validateEnv } from './config/env';
 import { GamingModule } from './gaming/gaming.module';
 import { HealthModule } from './health/health.module';
@@ -27,6 +31,8 @@ import { WalletModule } from './wallet/wallet.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
+    LoggerModule.forRoot(loggerConfig(process.env.NODE_ENV ?? 'development')),
+    ThrottlerModule.forRoot(HTTP_RATE_LIMIT),
     PrismaModule,
     RedisModule,
     HealthModule,
@@ -49,9 +55,6 @@ import { WalletModule } from './wallet/wallet.module';
     RealtimeModule,
     AdminModule,
   ],
+  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
-export class AppModule implements NestModule {
-  configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(RequestContextMiddleware).forRoutes('*');
-  }
-}
+export class AppModule {}

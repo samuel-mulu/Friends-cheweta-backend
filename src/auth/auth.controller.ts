@@ -1,10 +1,13 @@
 import { Body, Controller, Ip, Post } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
+import { AUTH_RATE_LIMIT } from '../common/rate-limit';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { LogoutDto } from './dto/logout.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { RegisterDto } from './dto/register.dto';
 
+@Throttle(AUTH_RATE_LIMIT)
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
