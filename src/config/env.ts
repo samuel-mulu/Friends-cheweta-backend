@@ -17,7 +17,7 @@ const envSchema = z.object({
   REDIS_URL: z.string().min(1).default('redis://localhost:6379'),
   REDIS_KEY_PREFIX: z.string().min(1).default('friends-game'),
   REDIS_RUNTIME_TTL_SECONDS: z.coerce.number().int().positive().default(86400),
-  REDIS_COMMAND_TTL_SECONDS: z.coerce.number().int().positive().default(86400),
+  REDIS_COMMAND_TTL_SECONDS: z.coerce.number().int().positive().default(3600),
   REDIS_PRESENCE_TTL_SECONDS: z.coerce.number().int().positive().default(90),
   REDIS_LOCK_TTL_MS: z.coerce.number().int().min(1000).max(30000).default(5000),
 

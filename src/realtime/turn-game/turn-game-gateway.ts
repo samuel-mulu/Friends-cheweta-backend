@@ -1,4 +1,5 @@
 import { ChatService } from '../../chat/chat.service';
+import { requireUser } from '../gateways/gateway.util';
 import { LudoCommandDto, MatchJoinDto } from '../dto/ludo-command.dto';
 import { RealtimePublisherService } from '../realtime-publisher.service';
 import { AuthenticatedSocket } from '../realtime.types';
@@ -10,7 +11,7 @@ import { TurnGameTimer } from './turn-game-timer';
 /**
  * Shared socket handling for a turn game (join, sync, commands). A concrete
  * gateway declares its `@SubscribeMessage` handlers and calls these.
- * Connection, auth, chat and reactions live in RealtimeGateway; the match
+ * Connection, auth, chat and reactions live in `gateways/`; the match
  * room is shared.
  */
 export abstract class TurnGameGateway<S extends TurnGameState, C extends TurnGameCommand, E extends TurnGameEvent> {
@@ -26,7 +27,7 @@ export abstract class TurnGameGateway<S extends TurnGameState, C extends TurnGam
 
   protected async joinMatch(socket: AuthenticatedSocket, dto: MatchJoinDto): Promise<any> {
     try {
-      const user = this.requireUser(socket);
+      const user = requireUser(socket);
       const state = await this.runtime.getSnapshot(dto.matchId, user.id);
       await socket.join(this.publisher.matchRoom(dto.matchId));
       const timing = await this.timer.onMatchJoined(dto.matchId, user.id, state);
@@ -40,7 +41,7 @@ export abstract class TurnGameGateway<S extends TurnGameState, C extends TurnGam
 
   protected async syncMatch(socket: AuthenticatedSocket, dto: MatchJoinDto): Promise<any> {
     try {
-      const user = this.requireUser(socket);
+      const user = requireUser(socket);
       const state = await this.runtime.getSnapshot(dto.matchId, user.id);
       return { ...(await this.snapshot(dto.matchId, state)), timing: await this.timer.getTiming(state) };
     } catch (error) {
@@ -50,7 +51,7 @@ export abstract class TurnGameGateway<S extends TurnGameState, C extends TurnGam
 
   protected async command(socket: AuthenticatedSocket, dto: LudoCommandDto, body: CommandBody<C>): Promise<any> {
     try {
-      const user = this.requireUser(socket);
+      const user = requireUser(socket);
       if (!socket.rooms.has(this.publisher.matchRoom(dto.matchId))) throw new Error('MATCH_ROOM_NOT_JOINED');
       if (this.runtime.definition.requiresAllJoined?.(body)) await this.timer.assertAllJoined(dto.matchId);
       const result = await this.runtime.execute({
@@ -76,10 +77,5 @@ export abstract class TurnGameGateway<S extends TurnGameState, C extends TurnGam
       participants: await this.runtime.getParticipantViews(matchId, state),
       ...(this.runtime.definition.snapshotExtras?.(state) ?? {}),
     };
-  }
-
-  private requireUser(socket: AuthenticatedSocket) {
-    if (!socket.data.user) throw new Error('SOCKET_NOT_AUTHENTICATED');
-    return socket.data.user;
   }
 }

@@ -6,20 +6,20 @@ import { GameRegistry } from '../turn-game/game-registry';
 import { DisconnectGraceService } from './disconnect-grace.service';
 import { PrematchCleanupService } from './prematch-cleanup.service';
 
-// Gameplay maintenance (turn timeouts, disconnect grace, ready no-shows) and
-// settlement reconciliation run on independent timers with independent
-// guards, so a slow or stuck settlement pass can never starve time-critical
-// gameplay processing.
+// Three independent loops, each with its own guard, so slow work never delays
+// the clocks players can see:
+//  - gameplay (1 s, Redis only): challenge expiry, turn timeouts, disconnect grace
+//  - cleanup (15 s, PostgreSQL): ready no-shows, abandoned matches, post-commit retries
+//  - reconciliation (5 s): pending settlements
 const GAMEPLAY_TICK_MS = 1000;
+const CLEANUP_TICK_MS = 15_000;
 const RECONCILIATION_TICK_MS = 5000;
 
 @Injectable()
 export class RealtimeMaintenanceService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(RealtimeMaintenanceService.name);
-  private gameplayTimer?: NodeJS.Timeout;
-  private reconciliationTimer?: NodeJS.Timeout;
-  private gameplayRunning = false;
-  private settlementRunning = false;
+  private readonly timers: NodeJS.Timeout[] = [];
+  private readonly running = new Set<string>();
 
   constructor(
     private readonly games: GameRegistry,
@@ -31,45 +31,41 @@ export class RealtimeMaintenanceService implements OnModuleInit, OnApplicationSh
   ) {}
 
   onModuleInit(): void {
-    this.gameplayTimer = setInterval(() => void this.tickGameplay(), GAMEPLAY_TICK_MS);
-    this.reconciliationTimer = setInterval(() => void this.tickReconciliation(), RECONCILIATION_TICK_MS);
+    this.every(GAMEPLAY_TICK_MS, 'Gameplay maintenance', () => this.tickGameplay());
+    this.every(CLEANUP_TICK_MS, 'Match cleanup', () => this.tickCleanup());
+    this.every(RECONCILIATION_TICK_MS, 'Settlement reconciliation', () => this.settlement.reconcilePending());
   }
 
   onApplicationShutdown(): void {
-    if (this.gameplayTimer) clearInterval(this.gameplayTimer);
-    if (this.reconciliationTimer) clearInterval(this.reconciliationTimer);
+    for (const timer of this.timers) clearInterval(timer);
+  }
+
+  /** Run `tick` on an interval; a tick still running is never re-entered. */
+  private every(intervalMs: number, name: string, tick: () => Promise<void>): void {
+    this.timers.push(
+      setInterval(() => {
+        if (this.running.has(name)) return;
+        this.running.add(name);
+        tick()
+          .catch((error: Error) => this.logger.warn(`${name} tick failed: ${error.message}`))
+          .finally(() => this.running.delete(name));
+      }, intervalMs),
+    );
   }
 
   private async tickGameplay(): Promise<void> {
-    if (this.gameplayRunning) return;
-    this.gameplayRunning = true;
-    try {
-      const transitions = await this.challenges.sweep().catch((error: Error) => {
-        this.logger.warn(`Challenge sweep failed: ${error.message}`);
-        return [];
-      });
-      for (const transition of transitions) this.publisher.publishChallengeTransition(transition);
-      for (const game of this.games.all()) await game.timer.processDue();
-      await this.disconnects.processDue();
-      await this.prematch.processReadyNoShows();
-      await this.prematch.processPrematchOrphans();
-      for (const game of this.games.all()) await game.runtime.retryPostCommit();
-    } catch (error) {
-      this.logger.warn(`Gameplay maintenance tick failed: ${(error as Error).message}`);
-    } finally {
-      this.gameplayRunning = false;
-    }
+    const transitions = await this.challenges.sweep().catch((error: Error) => {
+      this.logger.warn(`Challenge sweep failed: ${error.message}`);
+      return [];
+    });
+    for (const transition of transitions) this.publisher.publishChallengeTransition(transition);
+    for (const game of this.games.all()) await game.timer.processDue();
+    await this.disconnects.processDue();
   }
 
-  private async tickReconciliation(): Promise<void> {
-    if (this.settlementRunning) return;
-    this.settlementRunning = true;
-    try {
-      await this.settlement.reconcilePending();
-    } catch (error) {
-      this.logger.warn(`Settlement reconciliation tick failed: ${(error as Error).message}`);
-    } finally {
-      this.settlementRunning = false;
-    }
+  private async tickCleanup(): Promise<void> {
+    await this.prematch.processReadyNoShows();
+    await this.prematch.processPrematchOrphans();
+    for (const game of this.games.all()) await game.runtime.retryPostCommit();
   }
 }

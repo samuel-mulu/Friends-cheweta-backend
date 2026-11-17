@@ -26,8 +26,6 @@ export function applyLudoMove(
   tokenId: string,
   diceValue: number,
 ): { state: LudoGameState; resolution: LudoMoveResolution } {
-  assertValidLudoState(state);
-
   const legalMove = getLegalMoves(state, playerId, diceValue).find((move) => move.tokenId === tokenId);
   if (!legalMove) throw new Error('ILLEGAL_LUDO_MOVE');
 

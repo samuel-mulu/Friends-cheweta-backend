@@ -72,12 +72,37 @@ describe('RealtimeMaintenanceService (independent timers over the game registry)
     await jest.advanceTimersByTimeAsync(5000);
     expect(timer.processDue).toHaveBeenCalledTimes(20);
     expect(disconnects.processDue).toHaveBeenCalledTimes(10);
-    expect(prematch.processReadyNoShows).toHaveBeenCalledTimes(10);
-    expect(prematch.processPrematchOrphans).toHaveBeenCalledTimes(10);
-    expect(runtime.retryPostCommit).toHaveBeenCalledTimes(20);
+    // Database cleanup is not part of the one-second loop.
+    expect(prematch.processReadyNoShows).not.toHaveBeenCalled();
+    expect(runtime.retryPostCommit).not.toHaveBeenCalled();
 
     // The still-stuck reconciliation must not have been re-entered.
     expect(settlement.reconcilePending).toHaveBeenCalledTimes(1);
+
+    service.onApplicationShutdown();
+  });
+
+  it('runs database cleanup every 15 seconds on its own guard, without holding up turn timers', async () => {
+    const { service, timer, prematch, runtime } = createService();
+    let releaseNoShows: () => void = () => undefined;
+    prematch.processReadyNoShows.mockImplementation(() => new Promise<undefined>((resolve) => (releaseNoShows = () => resolve(undefined))));
+    service.onModuleInit();
+
+    await jest.advanceTimersByTimeAsync(15_000);
+    expect(prematch.processReadyNoShows).toHaveBeenCalledTimes(1);
+
+    // A slow database scan: turn timers keep firing, cleanup is not re-entered.
+    await jest.advanceTimersByTimeAsync(15_000);
+    expect(timer.processDue).toHaveBeenCalledTimes(60); // two games × 30 ticks
+    expect(prematch.processReadyNoShows).toHaveBeenCalledTimes(1);
+
+    releaseNoShows();
+    await flushMicrotasks();
+    expect(prematch.processPrematchOrphans).toHaveBeenCalledTimes(1);
+    expect(runtime.retryPostCommit).toHaveBeenCalledTimes(2); // once per game
+
+    await jest.advanceTimersByTimeAsync(15_000);
+    expect(prematch.processReadyNoShows).toHaveBeenCalledTimes(2);
 
     service.onApplicationShutdown();
   });

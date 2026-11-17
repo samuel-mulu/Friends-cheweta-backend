@@ -17,6 +17,9 @@ import { AppEnv } from '../config/env';
 
 type RedisClient = ReturnType<typeof createClient>;
 
+/** How often a waiting caller retries a held lock. */
+const LOCK_POLL_MS = 25;
+
 @Injectable()
 export class RedisService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(RedisService.name);
@@ -84,7 +87,7 @@ export class RedisService implements OnModuleInit, OnApplicationShutdown {
     let acquired = await this.client.set(key, token, { NX: true, PX: ttlMs });
 
     while (acquired !== 'OK' && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 75));
+      await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
       acquired = await this.client.set(key, token, { NX: true, PX: ttlMs });
     }
 

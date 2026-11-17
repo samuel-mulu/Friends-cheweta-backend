@@ -1,9 +1,9 @@
 import { RedisService } from '../redis/redis.service';
 
-export type StoredCommandRecord<TEvent> = {
+/** What duplicate detection needs; events are not replayed from here. */
+export type StoredCommandRecord = {
   fingerprint: string;
   resultingVersion: number;
-  events: TEvent[];
 };
 
 /**
@@ -39,8 +39,8 @@ export class RuntimeStore<TState, TEvent> {
     return this.redis.getJson<TState>(this.snapshotKey(matchId));
   }
 
-  getCommand(matchId: string, commandId: string): Promise<StoredCommandRecord<TEvent> | null> {
-    return this.redis.getJson<StoredCommandRecord<TEvent>>(this.commandKey(matchId, commandId));
+  getCommand(matchId: string, commandId: string): Promise<StoredCommandRecord | null> {
+    return this.redis.getJson<StoredCommandRecord>(this.commandKey(matchId, commandId));
   }
 
   /** Store only if no snapshot exists; returns the snapshot that is now authoritative. */
@@ -62,13 +62,8 @@ export class RuntimeStore<TState, TEvent> {
     fingerprint: string;
     state: TState;
     resultingVersion: number;
-    events: TEvent[];
   }): Promise<void> {
-    const record: StoredCommandRecord<TEvent> = {
-      fingerprint: input.fingerprint,
-      resultingVersion: input.resultingVersion,
-      events: input.events,
-    };
+    const record: StoredCommandRecord = { fingerprint: input.fingerprint, resultingVersion: input.resultingVersion };
     const tx = this.redis.raw().multi();
     tx.set(this.snapshotKey(input.matchId), JSON.stringify(input.state), { EX: this.runtimeTtlSeconds });
     tx.set(this.commandKey(input.matchId, input.commandId), JSON.stringify(record), { EX: this.commandTtlSeconds });

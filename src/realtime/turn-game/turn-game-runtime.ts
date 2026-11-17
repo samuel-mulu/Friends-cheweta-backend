@@ -19,8 +19,14 @@ export type TurnGameExecution<S, E> = {
 
 export type TurnGameParticipantView = { userId: string; fullName: string; seat: number } & Record<string, unknown>;
 
-const SLOW_COMMAND_MS = 250;
-const COMMAND_LOCK_WAIT_MS = 2000;
+const SLOW_COMMAND_MS = 100;
+/** How long a player's command waits for the match lock before RESOURCE_BUSY. */
+const COMMAND_LOCK_WAIT_MS = 500;
+
+export type TurnGameExecuteOptions = {
+  /** 0 = do not wait for a busy match (timers: they try again on the next tick). */
+  lockWaitMs?: number;
+};
 
 /**
  * Authoritative runtime for a turn game. A command is validated and committed
@@ -83,13 +89,15 @@ export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand,
     }));
   }
 
-  async execute(command: C & { matchId: string }): Promise<TurnGameExecution<S, E>> {
+  async execute(command: C & { matchId: string }, options: TurnGameExecuteOptions = {}): Promise<TurnGameExecution<S, E>> {
     const { matchId, ...runtimeCommand } = command;
     const startedAt = Date.now();
+    let lockWaitMs = 0;
 
     const execution = await this.redis.withLock(
       this.store.lockKey(matchId),
       async (): Promise<TurnGameExecution<S, E>> => {
+        lockWaitMs = Date.now() - startedAt;
         const fingerprint = JSON.stringify(command);
         const previous = await this.store.getCommand(matchId, command.commandId);
         if (previous) {
@@ -107,7 +115,6 @@ export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand,
           fingerprint,
           state: result.state,
           resultingVersion: result.state.game.version,
-          events: result.events,
         });
         return {
           commandId: command.commandId,
@@ -118,7 +125,7 @@ export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand,
         };
       },
       undefined,
-      COMMAND_LOCK_WAIT_MS,
+      options.lockWaitMs ?? COMMAND_LOCK_WAIT_MS,
     );
 
     if (!execution.duplicate) {
@@ -132,7 +139,11 @@ export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand,
       void this.persistence.enqueue(matchId, () => this.persistAfterCommit(matchId, command.commandId, execution));
     }
     const elapsed = Date.now() - startedAt;
-    if (elapsed > SLOW_COMMAND_MS) this.logger.warn(`${this.definition.key}_command_slow match=${matchId} type=${command.type} ms=${elapsed}`);
+    if (elapsed > SLOW_COMMAND_MS) {
+      this.logger.warn(
+        `command_slow game=${this.definition.key} type=${command.type} match=${matchId} command_ms=${elapsed} lock_wait_ms=${lockWaitMs}`,
+      );
+    }
     return execution;
   }
 

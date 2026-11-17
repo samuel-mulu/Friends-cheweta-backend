@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { MatchJoinTracker } from '../match-join-tracker';
 import { RealtimePublisherService } from '../realtime-publisher.service';
+import { toErrorPayload } from '../ws-errors';
 import { TurnGameCommand, TurnGameEvent, TurnGameState } from './turn-game.definition';
 import { TurnGameExecution, TurnGameRuntime } from './turn-game-runtime';
 
@@ -19,6 +20,13 @@ export type TurnTiming = {
   /** @deprecated Same as [strikes]; kept for clients that predate the shared timer. */
   consecutiveTimeoutsByPlayer: Record<string, number>;
 };
+
+/** Server-played commands never queue behind a player: they retry on the next tick. */
+const NO_WAIT = { lockWaitMs: 0 };
+
+function isResourceBusy(error: unknown): boolean {
+  return toErrorPayload(error).code === 'RESOURCE_BUSY';
+}
 
 /**
  * Per-turn clock for a turn game. On timeout the server plays the game's
@@ -103,6 +111,9 @@ export class TurnGameTimer<S extends TurnGameState, C extends TurnGameCommand, E
       try {
         await this.processTimeout(matchId, now);
       } catch (error) {
+        // A player's command holds the match right now: the deadline stays
+        // queued and the next tick looks again.
+        if (isResourceBusy(error)) continue;
         this.logger.warn(`${this.key}_timeout_failed match=${matchId} reason=${(error as Error).message}`);
       }
     }
@@ -120,7 +131,7 @@ export class TurnGameTimer<S extends TurnGameState, C extends TurnGameCommand, E
       commandId: `disconnect:${matchId}:${userId}:${state.game.version}`,
       playerId: userId,
       expectedVersion: state.game.version,
-    } as unknown as C & { matchId: string });
+    } as unknown as C & { matchId: string }, NO_WAIT);
     this.publisher.publishTurnGame(result, definition);
     const timing = await this.redis.getJson<TurnTiming>(this.timingKey(matchId));
     await this.schedule(result.state, timing?.strikes ?? {});
@@ -173,7 +184,7 @@ export class TurnGameTimer<S extends TurnGameState, C extends TurnGameCommand, E
       playerId,
       expectedVersion: state.game.version,
       commandId: `timeout:${forfeit ? 'forfeit' : 'auto'}:${matchId}:${state.game.version}`,
-    } as unknown as C & { matchId: string });
+    } as unknown as C & { matchId: string }, NO_WAIT);
     this.publisher.publishTurnGame(result, definition);
     // Tell everyone the server played for an absent player, with the strike
     // count, so a forfeit at the limit is never a surprise.
@@ -200,7 +211,7 @@ export class TurnGameTimer<S extends TurnGameState, C extends TurnGameCommand, E
         playerId,
         expectedVersion: current.game.version,
         commandId: `timeout:start:${matchId}:${playerId}:${current.game.version}`,
-      } as unknown as C & { matchId: string });
+      } as unknown as C & { matchId: string }, NO_WAIT);
       this.publisher.publishTurnGame(result, definition);
     }
   }

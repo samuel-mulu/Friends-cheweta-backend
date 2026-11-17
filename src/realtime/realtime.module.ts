@@ -12,6 +12,11 @@ import { DamaRuntimeRepository } from './dama/dama-runtime.repository';
 import { DamaRuntimeService } from './dama/dama-runtime.service';
 import { DamaTurnTimerService } from './dama/dama-turn-timer.service';
 import { DamaGateway } from './dama/dama.gateway';
+import { AdminGateway } from './gateways/admin.gateway';
+import { ChatGateway } from './gateways/chat.gateway';
+import { ConnectionGateway } from './gateways/connection.gateway';
+import { LobbyGateway } from './gateways/lobby.gateway';
+import { PracticeGateway } from './gateways/practice.gateway';
 import { KartaRuntimeRepository, KartaRuntimeService, KartaTurnTimerService } from './karta/karta.game';
 import { KartaGateway } from './karta/karta.gateway';
 import { LudoRuntimeRepository, LudoRuntimeService, LudoTurnTimerService } from './ludo/ludo-runtime.service';
@@ -20,7 +25,6 @@ import { MatchJoinTracker } from './match-join-tracker';
 import { PresenceService } from './presence.service';
 import { RealtimePublisherService } from './realtime-publisher.service';
 import { RealtimeAuthService } from './realtime-auth.service';
-import { RealtimeGateway } from './realtime.gateway';
 import { DisconnectGraceService } from './timeout/disconnect-grace.service';
 import { PrematchCleanupService } from './timeout/prematch-cleanup.service';
 import { RealtimeMaintenanceService } from './timeout/realtime-maintenance.service';
@@ -29,7 +33,11 @@ import { GameRegistry } from './turn-game/game-registry';
 @Module({
   imports: [LobbyModule, ChallengeModule, ChatModule, GameEntryModule, SettlementModule, MatchHistoryModule],
   providers: [
-    RealtimeGateway,
+    ConnectionGateway,
+    LobbyGateway,
+    ChatGateway,
+    PracticeGateway,
+    AdminGateway,
     RealtimeAuthService,
     PresenceService,
     RealtimePublisherService,
