@@ -81,10 +81,7 @@ export class ConnectionGateway implements OnGatewayInit, OnGatewayConnection, On
     if (cancelled) this.publisher.publishChallengeTransition(cancelled);
     const left = await this.lobby.leave(userId);
     if (left.gameModeId) {
-      this.publisher.publishRoom(this.publisher.lobbyRoom(left.gameModeId), 'lobby:player_left', {
-        gameModeId: left.gameModeId,
-        player: left.player,
-      });
+      this.publisher.publishLobby(left.gameModeId, 'lobby:player_left', { player: left.player });
     }
   }
 }

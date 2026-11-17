@@ -13,6 +13,8 @@ export type LobbyUserContext = {
 export type LobbyPlayerView = {
   userId: string;
   displayName: string;
+  /** The stake (game mode) the player sits at. */
+  gameModeId: string;
   state: LobbyPlayerState;
   readyAt?: string;
   isSelf?: boolean;
@@ -24,6 +26,27 @@ export type LobbyGameModeView = {
   name: string;
   stakeAmountMinor: string;
   currency: 'ETB';
+};
+
+/** One stake of a game, with how many players sit at it. */
+export type LobbyStakeView = {
+  id: string;
+  stakeAmountMinor: string;
+  onlineCount: number;
+  readyCount: number;
+};
+
+/** Everyone in a game's lobby, at every stake. */
+export type LobbyGameSnapshot = {
+  game: { id: string; code: string; name: string };
+  /** Enabled stakes, smallest first. */
+  stakes: LobbyStakeView[];
+  /** The viewer's stake. */
+  gameModeId: string;
+  myState: LobbyPlayerState;
+  players: LobbyPlayerView[];
+  recentMessages?: unknown[];
+  serverTime: string;
 };
 
 export type LobbySnapshot = {

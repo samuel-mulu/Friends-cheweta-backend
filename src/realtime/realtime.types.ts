@@ -18,6 +18,8 @@ export type RealtimeUser = {
 export type SocketData = {
   user?: RealtimeUser;
   presenceTimer?: NodeJS.Timeout;
+  /** The game lobby room this socket follows (every stake of one game). */
+  lobbyGameRoom?: string;
 };
 
 export type AuthenticatedSocket = Socket<

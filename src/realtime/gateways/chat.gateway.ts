@@ -45,7 +45,7 @@ export class ChatGateway {
       );
       if (!result.duplicate) {
         this.publisher.publishRoom(
-          this.publisher.lobbyRoom(result.message.scopeId),
+          this.publisher.lobbyRooms(result.message.scopeId),
           'lobby:chat:message',
           result.message,
         );

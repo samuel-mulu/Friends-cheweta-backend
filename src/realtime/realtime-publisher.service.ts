@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Server } from 'socket.io';
 import { ChallengeTransition } from '../challenge/challenge.types';
+import { LobbyRooms } from '../lobby/lobby-rooms';
 import { REALTIME_PROTOCOL_VERSION } from './realtime.types';
 
 export const LUDO_EVENT_NAMES: Record<string, string> = {
@@ -35,6 +36,8 @@ export const ADMIN_OPERATIONS_ROOM = 'admin:operations';
 @Injectable()
 export class RealtimePublisherService {
   private server?: Server;
+
+  constructor(@Optional() private readonly rooms?: LobbyRooms) {}
 
   attach(server: Server): void {
     this.server = server;
@@ -89,7 +92,12 @@ export class RealtimePublisherService {
     this.publishRoom(this.userRoom(userId), eventName, data, matchId);
   }
 
-  publishRoom(room: string, eventName: string, data: unknown, matchId?: string): void {
+  /** A lobby change at a stake: its stake room and its game's room (each socket gets it once). */
+  publishLobby(gameModeId: string, eventName: string, data: Record<string, unknown>): void {
+    this.publishRoom(this.lobbyRooms(gameModeId), eventName, { gameModeId, ...data });
+  }
+
+  publishRoom(room: string | string[], eventName: string, data: unknown, matchId?: string): void {
     if (!this.server) return;
     this.server.to(room).emit(eventName, {
       protocolVersion: REALTIME_PROTOCOL_VERSION,
@@ -103,21 +111,14 @@ export class RealtimePublisherService {
   /** Single broadcast path for every challenge outcome (user command, disconnect, sweep). */
   publishChallengeTransition(transition: ChallengeTransition): void {
     const { challenge, event } = transition;
-    const room = this.lobbyRoom(challenge.gameModeId);
     for (const userId of new Set([challenge.challengerId, challenge.opponentId])) {
       if (userId) this.publishUser(userId, event, challenge);
     }
     for (const player of transition.restoredPlayers) {
-      this.publishRoom(room, 'lobby:player_available', {
-        gameModeId: challenge.gameModeId,
-        player,
-      });
+      this.publishLobby(challenge.gameModeId, 'lobby:player_available', { player });
     }
     for (const userId of transition.leftUserIds) {
-      this.publishRoom(room, 'lobby:player_left', {
-        gameModeId: challenge.gameModeId,
-        player: { userId },
-      });
+      this.publishLobby(challenge.gameModeId, 'lobby:player_left', { player: { userId } });
     }
     for (const { userId, match } of transition.matchReady) {
       this.publishUser(userId, 'match:ready', { match }, match.id);
@@ -126,6 +127,11 @@ export class RealtimePublisherService {
 
   lobbyRoom(gameModeId: string): string {
     return `lobby:${gameModeId}`;
+  }
+
+  /** Every room that shows this stake. */
+  lobbyRooms(gameModeId: string): string[] {
+    return this.rooms?.roomsFor(gameModeId) ?? [this.lobbyRoom(gameModeId)];
   }
 
   userRoom(userId: string): string {

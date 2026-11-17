@@ -3,12 +3,20 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { COMMITTED_MATCH_STATUSES, RECOVERABLE_MATCH_STATUSES } from '../common/match-status';
 import { UserStatus } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
-import { LOBBY_TTL_SECONDS, LobbyPlayerView, LobbySnapshot, LobbyUserContext } from './lobby.types';
+import { LobbyRooms } from './lobby-rooms';
+import {
+  LOBBY_TTL_SECONDS,
+  LobbyGameSnapshot,
+  LobbyPlayerView,
+  LobbySnapshot,
+  LobbyUserContext,
+} from './lobby.types';
 
 @Injectable()
 export class LobbyService {
@@ -17,6 +25,7 @@ export class LobbyService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    @Optional() private readonly rooms?: LobbyRooms,
   ) {}
 
   async join(
@@ -24,6 +33,141 @@ export class LobbyService {
     gameModeId: string,
     recentMessages: unknown[] = [],
   ): Promise<{ previousGameModeId?: string; snapshot: LobbySnapshot; player: LobbyPlayerView }> {
+    const { previousGameModeId, player } = await this.enter(userId, gameModeId);
+    const snapshot = await this.snapshot(userId, gameModeId, recentMessages);
+    return { previousGameModeId, snapshot, player };
+  }
+
+  /**
+   * Open a game's lobby at a stake: `gameModeId`, else the stake the player
+   * already sits at in this game, else the smallest. Re-entering at the same
+   * stake keeps the player's state (ready, or a pending challenge); moving to
+   * another stake starts them ONLINE there.
+   */
+  async joinGame(
+    userId: string,
+    gameCode: string,
+    gameModeId?: string,
+  ): Promise<{
+    gameId: string;
+    gameModeId: string;
+    previousGameModeId?: string;
+    changed: boolean;
+    snapshot: LobbyGameSnapshot;
+    player: LobbyPlayerView;
+  }> {
+    const game = await this.requireGame(gameCode);
+    const stakeIds = game.modes.map((mode) => mode.id);
+    if (gameModeId && !stakeIds.includes(gameModeId)) {
+      throw new NotFoundException({
+        code: 'LOBBY_INVALID_MODE',
+        message: 'This stake is not open.',
+      });
+    }
+    const current = await this.getContext(userId);
+    const target =
+      gameModeId ??
+      (current && stakeIds.includes(current.gameModeId) ? current.gameModeId : stakeIds[0]);
+
+    let previousGameModeId = current?.gameModeId;
+    let changed = false;
+    if (current?.gameModeId !== target) {
+      if (current?.state === 'CHALLENGED') {
+        throw new ConflictException({
+          code: 'LOBBY_USER_BUSY',
+          message: 'Resolve the challenge first.',
+        });
+      }
+      previousGameModeId = (await this.enter(userId, target)).previousGameModeId;
+      changed = true;
+    } else {
+      await this.assertUsersActive([userId]);
+      await this.touch(userId);
+    }
+    const snapshot = await this.gameSnapshot(userId, game);
+    const [player] = await this.playerViews([userId]);
+    return { gameId: game.id, gameModeId: target, previousGameModeId, changed, snapshot, player };
+  }
+
+  /** Everyone at every stake of a game, for a lobby that shows them all. */
+  async gameSnapshot(
+    viewerUserId: string,
+    game: Awaited<ReturnType<LobbyService['requireGame']>>,
+    recentMessages: unknown[] = [],
+  ): Promise<LobbyGameSnapshot> {
+    const perStake = await Promise.all(
+      game.modes.map(async (mode) => {
+        const [onlineIds, readyIds] = await Promise.all([
+          this.redis.raw().sMembers(this.onlineKey(mode.id)),
+          this.redis.raw().zRange(this.readyKey(mode.id), 0, this.snapshotLimit - 1),
+        ]);
+        return { mode, ids: [...new Set([...readyIds, ...onlineIds])] };
+      }),
+    );
+    const allIds = [...new Set(perStake.flatMap((stake) => stake.ids))].slice(
+      0,
+      this.snapshotLimit,
+    );
+    const contexts = await this.getContexts([...new Set([...allIds, viewerUserId])]);
+
+    const liveIds: string[] = [];
+    const stakes = [];
+    for (const { mode, ids } of perStake) {
+      const stale = ids.filter((id) => contexts.get(id)?.gameModeId !== mode.id);
+      if (stale.length > 0) {
+        await this.redis
+          .raw()
+          .multi()
+          .sRem(this.onlineKey(mode.id), stale)
+          .zRem(this.readyKey(mode.id), stale)
+          .exec();
+      }
+      const live = ids.filter((id) => !stale.includes(id) && allIds.includes(id));
+      liveIds.push(...live);
+      stakes.push({
+        id: mode.id,
+        stakeAmountMinor: mode.stakeAmountMinor.toString(),
+        onlineCount: live.length,
+        readyCount: live.filter((id) => contexts.get(id)?.state === 'READY').length,
+      });
+    }
+
+    const mine = contexts.get(viewerUserId);
+    const inGame = mine && game.modes.some((mode) => mode.id === mine.gameModeId);
+    return {
+      game: { id: game.id, code: game.code, name: game.name },
+      stakes,
+      gameModeId: inGame ? mine.gameModeId : game.modes[0].id,
+      myState: inGame ? mine.state : 'ONLINE',
+      players: await this.playerViews(liveIds, viewerUserId, contexts),
+      recentMessages,
+      serverTime: new Date().toISOString(),
+    };
+  }
+
+  /** An enabled game with its enabled stakes, smallest first. */
+  async requireGame(gameCode: string) {
+    const game = await this.prisma.game.findUnique({
+      where: { code: gameCode },
+      include: { modes: { where: { enabled: true }, orderBy: { stakeAmountMinor: 'asc' } } },
+    });
+    if (!game)
+      throw new NotFoundException({ code: 'LOBBY_INVALID_GAME', message: 'Game does not exist.' });
+    if (!game.enabled || game.modes.length === 0) {
+      throw new BadRequestException({
+        code: 'LOBBY_MODE_DISABLED',
+        message: 'This game has no open rooms.',
+      });
+    }
+    for (const mode of game.modes) this.rooms?.remember(mode.id, game.id);
+    return game;
+  }
+
+  /** Sit at a stake as ONLINE, leaving any other stake. */
+  private async enter(
+    userId: string,
+    gameModeId: string,
+  ): Promise<{ previousGameModeId?: string; player: LobbyPlayerView }> {
     await this.assertMode(gameModeId);
     await this.assertUsersActive([userId]);
 
@@ -43,10 +187,9 @@ export class LobbyService {
       .set(this.userKey(userId), JSON.stringify(context), { EX: LOBBY_TTL_SECONDS })
       .exec();
 
-    const snapshot = await this.snapshot(userId, gameModeId, recentMessages);
     // Room-broadcast player view must be viewer-neutral (no isSelf).
     const [player] = await this.playerViews([userId]);
-    return { previousGameModeId: previous?.gameModeId, snapshot, player };
+    return { previousGameModeId: previous?.gameModeId, player };
   }
 
   async activeMatchForUser(userId: string) {
@@ -201,6 +344,7 @@ export class LobbyService {
       views.push({
         userId,
         displayName: nameById.get(userId) ?? 'Player',
+        gameModeId: context.gameModeId,
         state: context.state,
         ...(context.readyAt ? { readyAt: context.readyAt } : {}),
         ...(viewerUserId === userId ? { isSelf: true } : {}),
@@ -292,6 +436,7 @@ export class LobbyService {
         code: 'LOBBY_INVALID_MODE',
         message: 'Lobby mode does not exist.',
       });
+    if (mode.gameId) this.rooms?.remember(mode.id, mode.gameId);
     if (!mode.enabled || !mode.game.enabled)
       throw new BadRequestException({
         code: 'LOBBY_MODE_DISABLED',

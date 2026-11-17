@@ -15,7 +15,8 @@ import {
   InviteJoinDto,
 } from '../../challenge/dto/challenge.dto';
 import { ChatService } from '../../chat/chat.service';
-import { LobbyCommandDto, LobbyJoinDto } from '../../lobby/dto/lobby.dto';
+import { LobbyCommandDto, LobbyJoinDto, LobbyJoinGameDto } from '../../lobby/dto/lobby.dto';
+import { LobbyRooms } from '../../lobby/lobby-rooms';
 import { LobbyService } from '../../lobby/lobby.service';
 import { RealtimePublisherService } from '../realtime-publisher.service';
 import { AuthenticatedSocket } from '../realtime.types';
@@ -33,7 +34,67 @@ export class LobbyGateway {
     private readonly challenge: ChallengeService,
     private readonly chat: ChatService,
     private readonly publisher: RealtimePublisherService,
+    private readonly rooms: LobbyRooms,
   ) {}
+
+  /**
+   * A whole game's lobby: everyone at every stake, with the caller sitting at
+   * one stake (chosen, kept, or the smallest). The socket follows the game's
+   * room, so it sees changes at every stake.
+   */
+  @SubscribeMessage('lobby:join_game')
+  async joinGame(
+    @ConnectedSocket() socket: AuthenticatedSocket,
+    @MessageBody() dto: LobbyJoinGameDto,
+  ): Promise<Ack> {
+    try {
+      const user = requireUser(socket);
+      const activeChallenge = await this.challenge.activeForUser(user.id);
+      const activeMatch = await this.lobby.activeMatchForUser(user.id);
+      if (activeMatch) {
+        await this.lobby.leave(user.id).catch(() => undefined);
+        return { ok: true, commandId: dto.commandId, data: { activeMatch } };
+      }
+      const result = await this.lobby.joinGame(user.id, dto.gameCode, dto.gameModeId);
+      if (result.changed) {
+        if (result.previousGameModeId && result.previousGameModeId !== result.gameModeId) {
+          await socket.leave(this.publisher.lobbyRoom(result.previousGameModeId));
+          this.publisher.publishLobby(result.previousGameModeId, 'lobby:player_left', {
+            player: result.player,
+          });
+        }
+        this.publisher.publishLobby(result.gameModeId, 'lobby:player_joined', {
+          player: result.player,
+        });
+      }
+      const gameRoom = this.rooms.gameRoom(result.gameId);
+      if (socket.data.lobbyGameRoom && socket.data.lobbyGameRoom !== gameRoom) {
+        await socket.leave(socket.data.lobbyGameRoom);
+      }
+      await socket.join(gameRoom);
+      socket.data.lobbyGameRoom = gameRoom;
+
+      // One conversation per game: the chat of every stake, oldest first.
+      const histories = await Promise.all(
+        result.snapshot.stakes.map((stake) => this.chat.getLobbyHistory(stake.id).catch(() => [])),
+      );
+      const recentMessages = histories
+        .flat()
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        .slice(-50);
+      return {
+        ok: true,
+        commandId: dto.commandId,
+        data: {
+          ...result.snapshot,
+          recentMessages,
+          ...(activeChallenge ? { activeChallenge } : {}),
+        },
+      };
+    } catch (error) {
+      return toErrorAck(error);
+    }
+  }
 
   @SubscribeMessage('lobby:join')
   async joinLobby(
@@ -107,6 +168,10 @@ export class LobbyGateway {
       if (result.gameModeId) {
         await socket.leave(this.publisher.lobbyRoom(result.gameModeId));
         this.toLobby(result.gameModeId, 'lobby:player_left', { player: result.player });
+      }
+      if (socket.data.lobbyGameRoom) {
+        await socket.leave(socket.data.lobbyGameRoom);
+        socket.data.lobbyGameRoom = undefined;
       }
       return { ok: true, commandId: dto.commandId };
     } catch (error) {
@@ -273,10 +338,7 @@ export class LobbyGateway {
   }
 
   private toLobby(gameModeId: string, event: string, data: Record<string, unknown>): void {
-    this.publisher.publishRoom(this.publisher.lobbyRoom(gameModeId), event, {
-      gameModeId,
-      ...data,
-    });
+    this.publisher.publishLobby(gameModeId, event, data);
   }
 
   /** A failed accept still changes the challenge: tell both players, then report the reason. */
