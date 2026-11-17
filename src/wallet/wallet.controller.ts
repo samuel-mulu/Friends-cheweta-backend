@@ -16,10 +16,7 @@ export class WalletController {
   }
 
   @Get('transactions/me')
-  transactions(
-    @CurrentUser() user: AuthenticatedUser,
-    @Query() query: WalletTransactionsQueryDto,
-  ) {
+  transactions(@CurrentUser() user: AuthenticatedUser, @Query() query: WalletTransactionsQueryDto) {
     return this.walletService.listTransactions(user.id, query.limit, query.cursor);
   }
 }

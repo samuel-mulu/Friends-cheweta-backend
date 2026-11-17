@@ -1,4 +1,9 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
 import { MatchSource, MatchStatus, UserRole } from '../generated/prisma/enums';
 import { LudoMatchRuntimeState } from '../games/ludo/runtime';
@@ -13,12 +18,20 @@ type MatchRow = {
   stakeAmountMinor: bigint;
   gameMode?: object;
   entries?: Array<{ amountMinor: bigint }>;
-  settlement: { potAmountMinor: bigint; platformFeeMinor: bigint; payoutAmountMinor: bigint } | null;
+  settlement: {
+    potAmountMinor: bigint;
+    platformFeeMinor: bigint;
+    payoutAmountMinor: bigint;
+  } | null;
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Matches that will never receive another event. */
-const CLOSED_STATUSES: MatchStatus[] = [MatchStatus.FINISHED, MatchStatus.CANCELLED, MatchStatus.ABORTED];
+const CLOSED_STATUSES: MatchStatus[] = [
+  MatchStatus.FINISHED,
+  MatchStatus.CANCELLED,
+  MatchStatus.ABORTED,
+];
 const PRUNE_BATCH_MATCHES = 200;
 const PRUNE_MAX_BATCHES = 10;
 
@@ -78,7 +91,10 @@ export class MatchHistoryService {
       data: { version, state },
     });
     if (updated.count === 0) {
-      await db.matchCheckpoint.createMany({ data: [{ matchId, version, state }], skipDuplicates: true });
+      await db.matchCheckpoint.createMany({
+        data: [{ matchId, version, state }],
+        skipDuplicates: true,
+      });
     }
   }
 
@@ -95,7 +111,12 @@ export class MatchHistoryService {
         gameMode: { select: { code: true, name: true } },
         participants: {
           orderBy: { seat: 'asc' },
-          select: { userId: true, seat: true, resultPosition: true, user: { select: { fullName: true } } },
+          select: {
+            userId: true,
+            seat: true,
+            resultPosition: true,
+            user: { select: { fullName: true } },
+          },
         },
         settlement: true,
       },
@@ -107,7 +128,7 @@ export class MatchHistoryService {
     if (hasMore) rows.pop();
     return {
       items: rows.map((row) => this.serializeMatch(row)),
-      nextCursor: hasMore ? rows.at(-1)?.id ?? null : null,
+      nextCursor: hasMore ? (rows.at(-1)?.id ?? null) : null,
     };
   }
 
@@ -118,12 +139,16 @@ export class MatchHistoryService {
       include: {
         game: true,
         gameMode: true,
-        participants: { orderBy: { seat: 'asc' }, include: { user: { select: { id: true, fullName: true } } } },
+        participants: {
+          orderBy: { seat: 'asc' },
+          include: { user: { select: { id: true, fullName: true } } },
+        },
         entries: true,
         settlement: true,
       },
     });
-    if (!match) throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
+    if (!match)
+      throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
     return this.serializeMatch(match);
   }
 
@@ -135,31 +160,43 @@ export class MatchHistoryService {
         include: {
           game: { select: { code: true, name: true } },
           gameMode: { select: { code: true, name: true } },
-          participants: { orderBy: { seat: 'asc' }, include: { user: { select: { id: true, fullName: true } } } },
+          participants: {
+            orderBy: { seat: 'asc' },
+            include: { user: { select: { id: true, fullName: true } } },
+          },
           settlement: true,
         },
       }),
       this.prisma.matchEvent.findMany({ where: { matchId }, orderBy: { sequence: 'asc' } }),
       this.prisma.matchCheckpoint.findUnique({ where: { matchId } }),
     ]);
-    if (!match) throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
+    if (!match)
+      throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
     return {
       match: this.serializeMatch(match),
       events,
-      checkpoint: checkpoint ? { version: checkpoint.version, state: checkpoint.state, updatedAt: checkpoint.updatedAt } : null,
+      checkpoint: checkpoint
+        ? { version: checkpoint.version, state: checkpoint.state, updatedAt: checkpoint.updatedAt }
+        : null,
     };
   }
 
   async listAdmin(limit = 50, status?: string) {
     if (status && !(status in MatchStatus)) {
-      throw new BadRequestException({ code: 'INVALID_MATCH_STATUS', message: 'Unknown match status.' });
+      throw new BadRequestException({
+        code: 'INVALID_MATCH_STATUS',
+        message: 'Unknown match status.',
+      });
     }
     const rows = await this.prisma.match.findMany({
       where: status ? { status: status as MatchStatus } : undefined,
       include: {
         game: { select: { code: true, name: true } },
         gameMode: { select: { code: true, name: true } },
-        participants: { orderBy: { seat: 'asc' }, include: { user: { select: { id: true, fullName: true, phoneNumber: true } } } },
+        participants: {
+          orderBy: { seat: 'asc' },
+          include: { user: { select: { id: true, fullName: true, phoneNumber: true } } },
+        },
         settlement: true,
       },
       orderBy: { createdAt: 'desc' },
@@ -169,14 +206,22 @@ export class MatchHistoryService {
   }
 
   private async assertCanRead(matchId: string, requester: { id: string; role: UserRole }) {
-    const match = await this.prisma.match.findUnique({ where: { id: matchId }, select: { id: true } });
-    if (!match) throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      select: { id: true },
+    });
+    if (!match)
+      throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
     if (requester.role === UserRole.ADMIN) return;
     const participant = await this.prisma.matchParticipant.findUnique({
       where: { matchId_userId: { matchId, userId: requester.id } },
       select: { id: true },
     });
-    if (!participant) throw new ForbiddenException({ code: 'MATCH_ACCESS_DENIED', message: 'You are not part of this match.' });
+    if (!participant)
+      throw new ForbiddenException({
+        code: 'MATCH_ACCESS_DENIED',
+        message: 'You are not part of this match.',
+      });
   }
 
   /**
@@ -186,7 +231,10 @@ export class MatchHistoryService {
    */
   async pruneEvents(now = Date.now()): Promise<number> {
     const paid = await this.pruneEventsWhere({ updatedAt: { lt: new Date(now - 30 * DAY_MS) } });
-    const practice = await this.pruneEventsWhere({ source: MatchSource.PRACTICE, updatedAt: { lt: new Date(now - DAY_MS) } });
+    const practice = await this.pruneEventsWhere({
+      source: MatchSource.PRACTICE,
+      updatedAt: { lt: new Date(now - DAY_MS) },
+    });
     return paid + practice;
   }
 
@@ -199,7 +247,9 @@ export class MatchHistoryService {
         take: PRUNE_BATCH_MATCHES,
       });
       if (matches.length === 0) break;
-      const result = await this.prisma.matchEvent.deleteMany({ where: { matchId: { in: matches.map((match) => match.id) } } });
+      const result = await this.prisma.matchEvent.deleteMany({
+        where: { matchId: { in: matches.map((match) => match.id) } },
+      });
       deleted += result.count;
       if (matches.length < PRUNE_BATCH_MATCHES) break;
     }
@@ -211,8 +261,13 @@ export class MatchHistoryService {
     return {
       ...row,
       stakeAmountMinor: row.stakeAmountMinor.toString(),
-      gameMode: gameMode ? { ...gameMode, stakeAmountMinor: gameMode.stakeAmountMinor?.toString() } : gameMode,
-      entries: row.entries?.map((entry) => ({ ...entry, amountMinor: entry.amountMinor.toString() })),
+      gameMode: gameMode
+        ? { ...gameMode, stakeAmountMinor: gameMode.stakeAmountMinor?.toString() }
+        : gameMode,
+      entries: row.entries?.map((entry) => ({
+        ...entry,
+        amountMinor: entry.amountMinor.toString(),
+      })),
       settlement: row.settlement
         ? {
             ...row.settlement,

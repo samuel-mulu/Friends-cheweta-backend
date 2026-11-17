@@ -21,7 +21,9 @@ export class AdminOpsService {
       this.prisma.user.count({ where: { role: 'PLAYER' } }),
       this.prisma.user.count({ where: { role: 'PLAYER', status: UserStatus.ACTIVE } }),
       this.prisma.user.count({ where: { role: 'PLAYER', status: UserStatus.BLOCKED } }),
-      this.prisma.match.count({ where: { status: { in: [MatchStatus.READY, MatchStatus.PLAYING, MatchStatus.FINISHING] } } }),
+      this.prisma.match.count({
+        where: { status: { in: [MatchStatus.READY, MatchStatus.PLAYING, MatchStatus.FINISHING] } },
+      }),
       this.prisma.match.count({ where: { status: MatchStatus.FINISHED } }),
       this.prisma.deposit.count({ where: { status: PaymentStatus.PENDING } }),
       this.prisma.withdrawal.count({ where: { status: PaymentStatus.PENDING } }),

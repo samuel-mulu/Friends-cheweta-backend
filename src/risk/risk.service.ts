@@ -25,7 +25,10 @@ export class RiskService {
   /** `status`: OPEN | REVIEWED | DISMISSED | ALL. Worst severity first. */
   async list(status = 'OPEN', limit = 100) {
     if (status !== 'ALL' && !(status in RiskFlagStatus)) {
-      throw new BadRequestException({ code: 'INVALID_RISK_STATUS', message: 'Unknown risk flag status.' });
+      throw new BadRequestException({
+        code: 'INVALID_RISK_STATUS',
+        message: 'Unknown risk flag status.',
+      });
     }
     return this.prisma.riskFlag.findMany({
       where: status === 'ALL' ? undefined : { status: status as RiskFlagStatus },
@@ -60,7 +63,8 @@ export class RiskService {
     const counts = new Map<string, number>();
     for (const item of matches) {
       for (const participant of item.participants) {
-        if (participant.userId !== userId) counts.set(participant.userId, (counts.get(participant.userId) ?? 0) + 1);
+        if (participant.userId !== userId)
+          counts.set(participant.userId, (counts.get(participant.userId) ?? 0) + 1);
       }
     }
     for (const [opponentId, count] of counts) {

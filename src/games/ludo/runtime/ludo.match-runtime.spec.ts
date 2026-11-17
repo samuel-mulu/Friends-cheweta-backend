@@ -178,7 +178,9 @@ describe('LudoMatchRuntime', () => {
 
   describe('a player who is out leaves only shared-track tokens for the yard', () => {
     function runtimeWithMixedTokens(tokensToWin: number) {
-      const game = createInitialLudoState('m1', ['p1', 'p2', 'p3'], 'LUDO_CLASSIC_V3', { tokensToWin });
+      const game = createInitialLudoState('m1', ['p1', 'p2', 'p3'], 'LUDO_CLASSIC_V3', {
+        tokensToWin,
+      });
       game.phase = LudoMatchPhase.PLAYING;
       game.turnPhase = LudoTurnPhase.WAITING_FOR_ROLL;
       game.currentPlayerId = 'p1';
@@ -210,7 +212,9 @@ describe('LudoMatchRuntime', () => {
         tokenId: 'RED-1',
         expectedVersion: 1,
       });
-      const finishedEvent = result.events.find((e) => e.type === LudoRuntimeEventType.PLAYER_FINISHED);
+      const finishedEvent = result.events.find(
+        (e) => e.type === LudoRuntimeEventType.PLAYER_FINISHED,
+      );
       expect(finishedEvent?.tokenIds).toEqual(['RED-2']);
       const tokens = runtime.getState().game.players[0].tokens;
       expect(tokens[0]).toMatchObject({ state: LudoTokenState.FINISHED, progress: 56 });
@@ -220,7 +224,12 @@ describe('LudoMatchRuntime', () => {
 
     it('on resigning, home-lane tokens stay in the lane', () => {
       const runtime = runtimeWithMixedTokens(4);
-      const result = runtime.execute({ type: 'RESIGN', commandId: 'resign', playerId: 'p1', expectedVersion: 0 });
+      const result = runtime.execute({
+        type: 'RESIGN',
+        commandId: 'resign',
+        playerId: 'p1',
+        expectedVersion: 0,
+      });
       const resigned = result.events.find((e) => e.type === LudoRuntimeEventType.PLAYER_RESIGNED);
       expect(resigned?.tokenIds).toEqual(['RED-2']);
       const tokens = runtime.getState().game.players[0].tokens;

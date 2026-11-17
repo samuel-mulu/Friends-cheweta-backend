@@ -17,9 +17,17 @@ import { ChatGateway } from './gateways/chat.gateway';
 import { ConnectionGateway } from './gateways/connection.gateway';
 import { LobbyGateway } from './gateways/lobby.gateway';
 import { PracticeGateway } from './gateways/practice.gateway';
-import { KartaRuntimeRepository, KartaRuntimeService, KartaTurnTimerService } from './karta/karta.game';
+import {
+  KartaRuntimeRepository,
+  KartaRuntimeService,
+  KartaTurnTimerService,
+} from './karta/karta.game';
 import { KartaGateway } from './karta/karta.gateway';
-import { LudoRuntimeRepository, LudoRuntimeService, LudoTurnTimerService } from './ludo/ludo-runtime.service';
+import {
+  LudoRuntimeRepository,
+  LudoRuntimeService,
+  LudoTurnTimerService,
+} from './ludo/ludo-runtime.service';
 import { LudoGateway } from './ludo/ludo.gateway';
 import { MatchJoinTracker } from './match-join-tracker';
 import { PresenceService } from './presence.service';
@@ -31,7 +39,14 @@ import { RealtimeMaintenanceService } from './timeout/realtime-maintenance.servi
 import { GameRegistry } from './turn-game/game-registry';
 
 @Module({
-  imports: [LobbyModule, ChallengeModule, ChatModule, GameEntryModule, SettlementModule, MatchHistoryModule],
+  imports: [
+    LobbyModule,
+    ChallengeModule,
+    ChatModule,
+    GameEntryModule,
+    SettlementModule,
+    MatchHistoryModule,
+  ],
   providers: [
     ConnectionGateway,
     LobbyGateway,
@@ -63,7 +78,14 @@ import { GameRegistry } from './turn-game/game-registry';
     // Cross-game
     {
       provide: GameRegistry,
-      inject: [LudoRuntimeService, LudoTurnTimerService, DamaRuntimeService, DamaTurnTimerService, KartaRuntimeService, KartaTurnTimerService],
+      inject: [
+        LudoRuntimeService,
+        LudoTurnTimerService,
+        DamaRuntimeService,
+        DamaTurnTimerService,
+        KartaRuntimeService,
+        KartaTurnTimerService,
+      ],
       useFactory: (
         ludo: LudoRuntimeService,
         ludoTimer: LudoTurnTimerService,

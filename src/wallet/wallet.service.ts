@@ -47,11 +47,13 @@ export class WalletService {
     };
   }
 
-  async listAdminTransactions(params: {
-    type?: WalletTransactionType;
-    userId?: string;
-    limit?: number;
-  } = {}) {
+  async listAdminTransactions(
+    params: {
+      type?: WalletTransactionType;
+      userId?: string;
+      limit?: number;
+    } = {},
+  ) {
     const limit = Math.min(Math.max(params.limit ?? 100, 1), 100);
     const rows = await this.prisma.walletTransaction.findMany({
       where: {
@@ -93,7 +95,7 @@ export class WalletService {
 
     return {
       items: items.map((row) => this.serializeTransaction(row)),
-      nextCursor: hasMore ? items[items.length - 1]?.id ?? null : null,
+      nextCursor: hasMore ? (items[items.length - 1]?.id ?? null) : null,
     };
   }
 
@@ -238,7 +240,10 @@ export class WalletService {
 
   private validateMutation(input: WalletMutationInput): void {
     if (input.amountMinor <= 0n) {
-      throw new BadRequestException({ code: 'INVALID_AMOUNT', message: 'Amount must be greater than zero.' });
+      throw new BadRequestException({
+        code: 'INVALID_AMOUNT',
+        message: 'Amount must be greater than zero.',
+      });
     }
     if (!input.idempotencyKey.trim()) {
       throw new BadRequestException({

@@ -46,12 +46,16 @@ export class DisconnectGraceService {
 
   async processDue(): Promise<void> {
     const now = Date.now();
-    const userIds = await this.redis.raw().zRangeByScore(this.queueKey(), 0, now, { LIMIT: { offset: 0, count: 25 } });
+    const userIds = await this.redis
+      .raw()
+      .zRangeByScore(this.queueKey(), 0, now, { LIMIT: { offset: 0, count: 25 } });
     for (const userId of userIds) {
       try {
         await this.processOne(userId, now);
       } catch (error) {
-        this.logger.warn(`Disconnect grace processing failed for ${userId}: ${(error as Error).message}`);
+        this.logger.warn(
+          `Disconnect grace processing failed for ${userId}: ${(error as Error).message}`,
+        );
       }
     }
   }
@@ -66,7 +70,10 @@ export class DisconnectGraceService {
 
     const participant = await this.prisma.matchParticipant.findFirst({
       where: { userId, match: { status: { in: [MatchStatus.READY, MatchStatus.PLAYING] } } },
-      select: { matchId: true, match: { select: { status: true, game: { select: { code: true } } } } },
+      select: {
+        matchId: true,
+        match: { select: { status: true, game: { select: { code: true } } } },
+      },
       orderBy: { joinedAt: 'desc' },
     });
     if (!participant) {
@@ -75,7 +82,11 @@ export class DisconnectGraceService {
     }
 
     if (participant.match.status === MatchStatus.READY) {
-      await this.prematch.cancelBeforeStart(participant.matchId, 'PLAYER_DISCONNECTED_BEFORE_START', 'DISCONNECT_GRACE_EXPIRED');
+      await this.prematch.cancelBeforeStart(
+        participant.matchId,
+        'PLAYER_DISCONNECTED_BEFORE_START',
+        'DISCONNECT_GRACE_EXPIRED',
+      );
     } else {
       const game = this.games.get(participant.match.game.code);
       if (game) await game.timer.forfeitAbsent(participant.matchId, userId);
@@ -84,7 +95,12 @@ export class DisconnectGraceService {
   }
 
   private async clear(userId: string): Promise<void> {
-    await this.redis.raw().multi().zRem(this.queueKey(), userId).del(this.deadlineKey(userId)).exec();
+    await this.redis
+      .raw()
+      .multi()
+      .zRem(this.queueKey(), userId)
+      .del(this.deadlineKey(userId))
+      .exec();
   }
 
   private queueKey(): string {

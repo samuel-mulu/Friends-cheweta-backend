@@ -17,23 +17,31 @@ describe('prematch orphan lifecycle', () => {
     };
     const wallet = {
       availableBalance: 0n,
-      lockedBalance: initial.entries.reduce((sum, e) => sum + (e.status === MatchEntryStatus.LOCKED ? e.amountMinor : 0n), 0n),
+      lockedBalance: initial.entries.reduce(
+        (sum, e) => sum + (e.status === MatchEntryStatus.LOCKED ? e.amountMinor : 0n),
+        0n,
+      ),
     };
     const ledger: string[] = [];
 
     const walletService = {
-      releaseFundsInTransaction: jest.fn(async (_tx: unknown, input: { amountMinor: bigint; idempotencyKey: string }) => {
-        if (ledger.includes(input.idempotencyKey)) return;
-        wallet.lockedBalance -= input.amountMinor;
-        wallet.availableBalance += input.amountMinor;
-        ledger.push(input.idempotencyKey);
-      }),
+      releaseFundsInTransaction: jest.fn(
+        async (_tx: unknown, input: { amountMinor: bigint; idempotencyKey: string }) => {
+          if (ledger.includes(input.idempotencyKey)) return;
+          wallet.lockedBalance -= input.amountMinor;
+          wallet.availableBalance += input.amountMinor;
+          ledger.push(input.idempotencyKey);
+        },
+      ),
     };
 
     const prisma = {
       $transaction: async (fn: (tx: any) => Promise<unknown>) => fn(prisma),
       match: {
-        findUnique: jest.fn(async () => ({ ...match, entries: match.entries.map((e) => ({ ...e })) })),
+        findUnique: jest.fn(async () => ({
+          ...match,
+          entries: match.entries.map((e) => ({ ...e })),
+        })),
         update: jest.fn(async ({ data }: any) => {
           Object.assign(match, data);
           return match;
@@ -92,18 +100,32 @@ describe('prematch orphan lifecycle', () => {
   });
 
   function createCleanup(overrides: { findMany?: jest.Mock; allJoined?: jest.Mock } = {}) {
-    const cancelAndRefund = jest.fn(async (matchId: string) => ({ matchId, status: MatchStatus.CANCELLED, refunded: true }));
+    const cancelAndRefund = jest.fn(async (matchId: string) => ({
+      matchId,
+      status: MatchStatus.CANCELLED,
+      refunded: true,
+    }));
     const findMany = overrides.findMany ?? jest.fn(async () => [{ id: 'old-orphan' }]);
     const prisma = {
       match: { findMany },
       matchParticipant: { findMany: jest.fn(async () => [{ userId: 'u1' }]) },
     };
     const publisher = { publishUser: jest.fn() };
-    const ludoTimer = { discard: jest.fn(async () => undefined), allJoined: overrides.allJoined ?? jest.fn(async () => true) };
-    const damaTimer = { discard: jest.fn(async () => undefined), allJoined: jest.fn(async () => true) };
+    const ludoTimer = {
+      discard: jest.fn(async () => undefined),
+      allJoined: overrides.allJoined ?? jest.fn(async () => true),
+    };
+    const damaTimer = {
+      discard: jest.fn(async () => undefined),
+      allJoined: jest.fn(async () => true),
+    };
     const games = {
-      all: () => [{ definition: { code: 'LUDO' }, timer: ludoTimer }, { definition: { code: 'DAMA' }, timer: damaTimer }],
-      get: (code: string) => (code === 'LUDO' ? { timer: ludoTimer } : code === 'DAMA' ? { timer: damaTimer } : undefined),
+      all: () => [
+        { definition: { code: 'LUDO' }, timer: ludoTimer },
+        { definition: { code: 'DAMA' }, timer: damaTimer },
+      ],
+      get: (code: string) =>
+        code === 'LUDO' ? { timer: ludoTimer } : code === 'DAMA' ? { timer: damaTimer } : undefined,
     };
     const config = {
       get: jest.fn((key: string) => {
@@ -112,7 +134,13 @@ describe('prematch orphan lifecycle', () => {
         return 3;
       }),
     };
-    const service = new PrematchCleanupService(prisma as any, { cancelAndRefund } as any, publisher as any, games as any, config as any);
+    const service = new PrematchCleanupService(
+      prisma as any,
+      { cancelAndRefund } as any,
+      publisher as any,
+      games as any,
+      config as any,
+    );
     return { service, cancelAndRefund, findMany, publisher, ludoTimer, damaTimer };
   }
 
@@ -124,13 +152,20 @@ describe('prematch orphan lifecycle', () => {
       expect(where.startedAt).toBeNull();
       return [{ id: 'old-orphan' }];
     });
-    const { service, cancelAndRefund, publisher, ludoTimer, damaTimer } = createCleanup({ findMany });
+    const { service, cancelAndRefund, publisher, ludoTimer, damaTimer } = createCleanup({
+      findMany,
+    });
 
     const cancelled = await service.processPrematchOrphans();
     expect(cancelled).toBe(1);
     expect(ludoTimer.discard).toHaveBeenCalledWith('old-orphan');
     expect(damaTimer.discard).toHaveBeenCalledWith('old-orphan');
-    expect(publisher.publishUser).toHaveBeenCalledWith('u1', 'match:cancelled', expect.objectContaining({ matchId: 'old-orphan' }), 'old-orphan');
+    expect(publisher.publishUser).toHaveBeenCalledWith(
+      'u1',
+      'match:cancelled',
+      expect.objectContaining({ matchId: 'old-orphan' }),
+      'old-orphan',
+    );
     expect(cancelAndRefund).toHaveBeenCalledWith('old-orphan', 'PREMATCH_ORPHAN_TIMEOUT', {
       expectedStatuses: PREMATCH_ORPHAN_STATUSES,
     });

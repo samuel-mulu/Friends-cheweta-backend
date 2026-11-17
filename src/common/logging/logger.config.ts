@@ -14,7 +14,10 @@ export function loggerConfig(nodeEnv: string): Params {
   return {
     pinoHttp: {
       level: nodeEnv === 'test' ? 'silent' : 'info',
-      transport: nodeEnv === 'development' ? { target: 'pino-pretty', options: { singleLine: true } } : undefined,
+      transport:
+        nodeEnv === 'development'
+          ? { target: 'pino-pretty', options: { singleLine: true } }
+          : undefined,
       genReqId: (req: RequestWithId, res: ServerResponse) => {
         const header = req.headers['x-request-id'];
         const requestId = (Array.isArray(header) ? header[0] : header)?.trim() || randomUUID();

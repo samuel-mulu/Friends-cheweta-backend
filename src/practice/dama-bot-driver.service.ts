@@ -21,7 +21,10 @@ export function decideDamaBotMove(
   const moves = currentLegalMoves(state);
   if (moves.length === 0) return null;
   const bot = damaBotFor(level, game.version + 1);
-  return { playerId: game.currentPlayerId, move: bot.choose(game, colorOfPlayer(game, game.currentPlayerId), moves) };
+  return {
+    playerId: game.currentPlayerId,
+    move: bot.choose(game, colorOfPlayer(game, game.currentPlayerId), moves),
+  };
 }
 
 /**
@@ -63,7 +66,10 @@ export class DamaBotDriverService implements OnModuleInit, OnModuleDestroy {
     if (this.timers.has(matchId) || state.game.phase !== DamaPhase.PLAYING) return;
     const levels = await this.bots.levels(state.game.players.map((player) => player.userId));
     if (!state.game.currentPlayerId || !levels.has(state.game.currentPlayerId)) return;
-    this.timers.set(matchId, setTimeout(() => void this.act(matchId), DamaBotDriverService.thinkMs));
+    this.timers.set(
+      matchId,
+      setTimeout(() => void this.act(matchId), DamaBotDriverService.thinkMs),
+    );
   }
 
   private async act(matchId: string): Promise<void> {
@@ -71,7 +77,10 @@ export class DamaBotDriverService implements OnModuleInit, OnModuleDestroy {
     try {
       const state = await this.runtime.getStoredSnapshot(matchId);
       if (!state) return;
-      const decision = decideDamaBotMove(state, await this.bots.levels(state.game.players.map((player) => player.userId)));
+      const decision = decideDamaBotMove(
+        state,
+        await this.bots.levels(state.game.players.map((player) => player.userId)),
+      );
       if (!decision) return;
       const result = await this.runtime.execute({
         matchId,

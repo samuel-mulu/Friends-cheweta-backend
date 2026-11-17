@@ -97,7 +97,11 @@ export async function seedCatalog(prisma: PrismaClient): Promise<{ bots: number 
       rulesVersion: 'DAMA_ET_V1',
       enabled: true,
     };
-    await prisma.gameMode.upsert({ where: { code: mode.code }, update: data, create: { code: mode.code, ...data } });
+    await prisma.gameMode.upsert({
+      where: { code: mode.code },
+      update: data,
+      create: { code: mode.code, ...data },
+    });
   }
 
   const karta = await prisma.game.upsert({
@@ -106,7 +110,8 @@ export async function seedCatalog(prisma: PrismaClient): Promise<{ bots: number 
     create: {
       code: 'KARTA',
       name: 'Karta Lat Lat',
-      description: 'ካርታ ላጥ ላጥ: call a rank, turn the cards; whoever gets it wins the round. First to 3.',
+      description:
+        'ካርታ ላጥ ላጥ: call a rank, turn the cards; whoever gets it wins the round. First to 3.',
     },
   });
   const kartaModes = [
@@ -125,7 +130,11 @@ export async function seedCatalog(prisma: PrismaClient): Promise<{ bots: number 
       rulesVersion: 'KARTA_LATLAT_V1',
       enabled: true,
     };
-    await prisma.gameMode.upsert({ where: { code: mode.code }, update: data, create: { code: mode.code, ...data } });
+    await prisma.gameMode.upsert({
+      where: { code: mode.code },
+      update: data,
+      create: { code: mode.code, ...data },
+    });
   }
 
   return { bots: BOT_ACCOUNTS.length };

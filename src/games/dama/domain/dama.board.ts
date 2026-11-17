@@ -24,7 +24,8 @@ export const DIAGONALS: ReadonlyArray<readonly [number, number]> = [
 export const forwardRow = (color: DamaColor): number => (color === DamaColor.LIGHT ? 1 : -1);
 
 /** The row where a man of this color is crowned. */
-export const promotionRow = (color: DamaColor): number => (color === DamaColor.LIGHT ? BOARD_SIZE - 1 : 0);
+export const promotionRow = (color: DamaColor): number =>
+  color === DamaColor.LIGHT ? BOARD_SIZE - 1 : 0;
 
 export const colorOf = (cell: string): DamaColor | null => {
   if (cell === 'l' || cell === 'L') return DamaColor.LIGHT;

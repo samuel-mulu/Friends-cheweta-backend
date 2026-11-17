@@ -7,10 +7,14 @@ import { replayLudoSimulation, simulateLudoMatch } from './ludo.simulator';
 describe('first to N home (tokensToWin)', () => {
   it('accepts 1 to 4 and rejects anything else', () => {
     for (const goal of [1, 2, 3, 4]) {
-      expect(createInitialLudoState('m', ['a', 'b'], undefined, { tokensToWin: goal }).tokensToWin).toBe(goal);
+      expect(
+        createInitialLudoState('m', ['a', 'b'], undefined, { tokensToWin: goal }).tokensToWin,
+      ).toBe(goal);
     }
     for (const bad of [0, 5, 2.5]) {
-      expect(() => createInitialLudoState('m', ['a', 'b'], undefined, { tokensToWin: bad })).toThrow(RangeError);
+      expect(() =>
+        createInitialLudoState('m', ['a', 'b'], undefined, { tokensToWin: bad }),
+      ).toThrow(RangeError);
     }
   });
 
@@ -26,10 +30,16 @@ describe('first to N home (tokensToWin)', () => {
       const result = simulateLudoMatch({
         matchId: `goal-${goal}-${index}`,
         playerIds: ['p1', 'p2', 'p3'],
-        bots: { p1: new MixedBot(index + 1), p2: new RandomBot(index + 50), p3: new RandomBot(index + 90) },
+        bots: {
+          p1: new MixedBot(index + 1),
+          p2: new RandomBot(index + 50),
+          p3: new RandomBot(index + 90),
+        },
         seed: `goal-dice-${goal}-${index}`,
         tokensToWin: goal,
-        rulesVersion: (['LUDO_CLASSIC_V1', 'LUDO_CLASSIC_V2', 'LUDO_CLASSIC_V3'] as const)[index % 3],
+        rulesVersion: (['LUDO_CLASSIC_V1', 'LUDO_CLASSIC_V2', 'LUDO_CLASSIC_V3'] as const)[
+          index % 3
+        ],
       });
       const home = (userId: string) =>
         result.finalState.players

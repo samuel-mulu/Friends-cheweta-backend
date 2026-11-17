@@ -25,7 +25,12 @@ const engine = new LudoEngine();
 /** Landing preview for whoever must move now (derived from state, so never stale). */
 export function previewLudoMoves(state: LudoMatchRuntimeState): LudoMovePreview[] {
   const game = state.game;
-  if (game.turnPhase !== LudoTurnPhase.WAITING_FOR_MOVE || !game.currentPlayerId || game.diceValue === null) return [];
+  if (
+    game.turnPhase !== LudoTurnPhase.WAITING_FOR_MOVE ||
+    !game.currentPlayerId ||
+    game.diceValue === null
+  )
+    return [];
   return engine.getLegalMoves(game, game.currentPlayerId, game.diceValue).map((move) => ({
     tokenId: move.tokenId,
     toProgress: move.toProgress,
@@ -35,7 +40,11 @@ export function previewLudoMoves(state: LudoMatchRuntimeState): LudoMovePreview[
 }
 
 /** Ludo (2–4 players, starting roll, "first to N home") on the shared turn-game runtime. */
-export const LUDO_GAME: TurnGameDefinition<LudoMatchRuntimeState, LudoRuntimeCommand, LudoRuntimeEvent> = {
+export const LUDO_GAME: TurnGameDefinition<
+  LudoMatchRuntimeState,
+  LudoRuntimeCommand,
+  LudoRuntimeEvent
+> = {
   code: LUDO_GAME_CODE,
   key: 'ludo',
   eventNames: LUDO_EVENT_NAMES,
@@ -44,9 +53,16 @@ export const LUDO_GAME: TurnGameDefinition<LudoMatchRuntimeState, LudoRuntimeCom
   maxPlayers: 4,
   isRulesVersion: isLudoRulesVersion,
   create: (matchId, playerIds, rulesVersion, options) =>
-    new LudoMatchRuntime(matchId, playerIds, new CryptoDiceProvider(), undefined, rulesVersion as LudoRulesVersion, {
-      tokensToWin: options.tokensToWin,
-    }).getState(),
+    new LudoMatchRuntime(
+      matchId,
+      playerIds,
+      new CryptoDiceProvider(),
+      undefined,
+      rulesVersion as LudoRulesVersion,
+      {
+        tokensToWin: options.tokensToWin,
+      },
+    ).getState(),
   execute: (state, command) => {
     const result = LudoMatchRuntime.restore(state, new CryptoDiceProvider()).execute(command);
     return { state: result.state, events: result.events };
@@ -56,7 +72,9 @@ export const LUDO_GAME: TurnGameDefinition<LudoMatchRuntimeState, LudoRuntimeCom
   // Starting roll: everyone who has not rolled yet; otherwise the player to move.
   actingPlayers: (state) =>
     state.game.phase === LudoMatchPhase.PRE_GAME
-      ? state.startingRoll.candidatePlayerIds.filter((id) => state.startingRoll.rolls[id] === undefined)
+      ? state.startingRoll.candidatePlayerIds.filter(
+          (id) => state.startingRoll.rolls[id] === undefined,
+        )
       : state.game.currentPlayerId
         ? [state.game.currentPlayerId]
         : [],
@@ -78,6 +96,8 @@ export const LUDO_GAME: TurnGameDefinition<LudoMatchRuntimeState, LudoRuntimeCom
     !state.game.winnerOrder.includes(userId),
   turnPhase: (state) => state.game.turnPhase,
   publicState: (state) => state,
-  playerInfo: (state, userId) => ({ color: state.game.players.find((player) => player.userId === userId)?.color ?? null }),
+  playerInfo: (state, userId) => ({
+    color: state.game.players.find((player) => player.userId === userId)?.color ?? null,
+  }),
   snapshotExtras: (state) => ({ legalMoves: previewLudoMoves(state), board: boardOf(state.game) }),
 };

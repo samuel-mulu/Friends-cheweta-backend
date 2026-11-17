@@ -42,7 +42,11 @@ export class RealtimePublisherService {
 
   /** Any turn game: events go out under the definition's socket names. */
   publishTurnGame(
-    result: { duplicate: boolean; commandId?: string; events: Array<{ type: string; matchId: string; version: number }> },
+    result: {
+      duplicate: boolean;
+      commandId?: string;
+      events: Array<{ type: string; matchId: string; version: number }>;
+    },
     definition: { key: string; eventNames: Record<string, string> },
   ): void {
     this.publishEvents(result, definition.eventNames, `${definition.key}:event`);

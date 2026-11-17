@@ -37,7 +37,9 @@ export class RealtimeMaintenanceService implements OnModuleInit, OnApplicationSh
   onModuleInit(): void {
     this.every(GAMEPLAY_TICK_MS, 'Gameplay maintenance', () => this.tickGameplay());
     this.every(CLEANUP_TICK_MS, 'Match cleanup', () => this.tickCleanup());
-    this.every(RECONCILIATION_TICK_MS, 'Settlement reconciliation', () => this.settlement.reconcilePending());
+    this.every(RECONCILIATION_TICK_MS, 'Settlement reconciliation', () =>
+      this.settlement.reconcilePending(),
+    );
   }
 
   onApplicationShutdown(): void {

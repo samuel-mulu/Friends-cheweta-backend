@@ -19,7 +19,10 @@ describe('HTTP baseline (request id and rate limits)', () => {
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [LoggerModule.forRoot(loggerConfig('test')), ThrottlerModule.forRoot(HTTP_RATE_LIMIT)],
+      imports: [
+        LoggerModule.forRoot(loggerConfig('test')),
+        ThrottlerModule.forRoot(HTTP_RATE_LIMIT),
+      ],
       controllers: [AuthController, HealthController],
       providers: [
         { provide: APP_GUARD, useClass: ThrottlerGuard },
@@ -52,7 +55,11 @@ describe('HTTP baseline (request id and rate limits)', () => {
 
     const blocked = await login().set('x-request-id', 'flood-1');
     expect(blocked.status).toBe(429);
-    expect(blocked.body).toMatchObject({ statusCode: 429, code: 'RATE_LIMITED', requestId: 'flood-1' });
+    expect(blocked.body).toMatchObject({
+      statusCode: 429,
+      code: 'RATE_LIMITED',
+      requestId: 'flood-1',
+    });
   });
 
   it('never limits the health check', async () => {

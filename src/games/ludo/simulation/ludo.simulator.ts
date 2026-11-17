@@ -1,5 +1,11 @@
 import { DiceProvider, FixedDiceProvider, SeededDiceProvider } from '../dice';
-import { LudoGameState, LudoMatchPhase, LudoTurnPhase, assertValidLudoState, LudoRulesVersion } from '../domain';
+import {
+  LudoGameState,
+  LudoMatchPhase,
+  LudoTurnPhase,
+  assertValidLudoState,
+  LudoRulesVersion,
+} from '../domain';
 import { LudoEngine } from '../engine';
 import { LudoMatchRuntime, LudoRuntimeCommand, LudoRuntimeEventType } from '../runtime';
 import { LudoBot } from './bots';
@@ -61,9 +67,16 @@ export function simulateLudoMatch(options: {
   const recordingDice = new RecordingDiceProvider(
     options.dice ?? new SeededDiceProvider(options.seed ?? options.matchId),
   );
-  const runtime = new LudoMatchRuntime(options.matchId, options.playerIds, recordingDice, undefined, rulesVersion, {
-    tokensToWin,
-  });
+  const runtime = new LudoMatchRuntime(
+    options.matchId,
+    options.playerIds,
+    recordingDice,
+    undefined,
+    rulesVersion,
+    {
+      tokensToWin,
+    },
+  );
   const engine = new LudoEngine();
   const transcript: ReplayAction[] = [];
   const maxCommands = options.maxCommands ?? 20_000;
@@ -127,8 +140,10 @@ export function simulateLudoMatch(options: {
   }
 
   const final = runtime.getState().game;
-  if (final.winnerOrder.length !== options.playerIds.length) throw new Error('INCOMPLETE_WINNER_ORDER');
-  if (new Set(final.winnerOrder).size !== options.playerIds.length) throw new Error('DUPLICATE_WINNER_ORDER');
+  if (final.winnerOrder.length !== options.playerIds.length)
+    throw new Error('INCOMPLETE_WINNER_ORDER');
+  if (new Set(final.winnerOrder).size !== options.playerIds.length)
+    throw new Error('DUPLICATE_WINNER_ORDER');
 
   return {
     matchId: options.matchId,

@@ -1,5 +1,11 @@
 import { DamaFinishReason, DamaPhase, DamaResult } from '../domain';
-import { DamaMatchRuntimeState, colorOfPlayer, createDamaMatch, currentLegalMoves, executeDamaCommand } from '../runtime';
+import {
+  DamaMatchRuntimeState,
+  colorOfPlayer,
+  createDamaMatch,
+  currentLegalMoves,
+  executeDamaCommand,
+} from '../runtime';
 import { DamaBot } from './dama.bots';
 
 export type DamaSimulationResult = {
@@ -30,7 +36,11 @@ export function simulateDamaMatch(input: {
   while (state.game.phase === DamaPhase.PLAYING) {
     if (state.game.plyCount >= maxPlies) throw new Error('DAMA_SIMULATION_PLY_LIMIT');
     const playerId = state.game.currentPlayerId!;
-    const move = bots[playerId].choose(state.game, colorOfPlayer(state.game, playerId), currentLegalMoves(state));
+    const move = bots[playerId].choose(
+      state.game,
+      colorOfPlayer(state.game, playerId),
+      currentLegalMoves(state),
+    );
     state = executeDamaCommand(state, {
       type: 'MOVE',
       commandId: `${input.matchId}:${state.game.version}`,

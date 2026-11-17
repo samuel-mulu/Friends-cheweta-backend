@@ -9,7 +9,9 @@ export function assertProductionRedisUrl(redisUrl: string, nodeEnv: string): voi
   try {
     hostname = new URL(redisUrl).hostname.toLowerCase();
   } catch {
-    throw new Error('REDIS_URL is not a valid URL. On Render, use the Key Value internal connection string.');
+    throw new Error(
+      'REDIS_URL is not a valid URL. On Render, use the Key Value internal connection string.',
+    );
   }
 
   if (LOCAL_REDIS_HOSTS.has(hostname)) {

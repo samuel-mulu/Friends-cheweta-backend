@@ -20,7 +20,12 @@ describe('RealtimeMaintenanceService (independent timers over the game registry)
       }),
     };
     const runtime = { retryPostCommit: jest.fn(async () => undefined) };
-    const games = { all: () => [{ definition: { code: 'LUDO' }, runtime, timer }, { definition: { code: 'DAMA' }, runtime, timer }] };
+    const games = {
+      all: () => [
+        { definition: { code: 'LUDO' }, runtime, timer },
+        { definition: { code: 'DAMA' }, runtime, timer },
+      ],
+    };
     const disconnects = { processDue: jest.fn(async () => undefined) };
     const prematch = {
       processReadyNoShows: jest.fn(async () => undefined),
@@ -89,7 +94,9 @@ describe('RealtimeMaintenanceService (independent timers over the game registry)
   it('runs database cleanup every 15 seconds on its own guard, without holding up turn timers', async () => {
     const { service, timer, prematch, runtime } = createService();
     let releaseNoShows: () => void = () => undefined;
-    prematch.processReadyNoShows.mockImplementation(() => new Promise<undefined>((resolve) => (releaseNoShows = () => resolve(undefined))));
+    prematch.processReadyNoShows.mockImplementation(
+      () => new Promise<undefined>((resolve) => (releaseNoShows = () => resolve(undefined))),
+    );
     service.onModuleInit();
 
     await jest.advanceTimersByTimeAsync(15_000);

@@ -28,7 +28,9 @@ describe('Ludo dice B8', () => {
   it('SeededDiceProvider reproduces the same sequence for the same seed', () => {
     const a = new SeededDiceProvider('simulation-123');
     const b = new SeededDiceProvider('simulation-123');
-    expect(Array.from({ length: 20 }, () => a.roll())).toEqual(Array.from({ length: 20 }, () => b.roll()));
+    expect(Array.from({ length: 20 }, () => a.roll())).toEqual(
+      Array.from({ length: 20 }, () => b.roll()),
+    );
   });
 
   it('creates and verifies a commit/reveal fairness foundation', () => {
@@ -41,8 +43,18 @@ describe('Ludo dice B8', () => {
   it('derives deterministic verifiable rolls from seed, match and roll index', () => {
     const seed = '11'.repeat(32);
     const publicEntropy = combineParticipantEntropy(['player-a-seed', 'player-b-seed']);
-    const first = deriveFairDice({ serverSeedHex: seed, matchId: 'match-42', rollIndex: 7, publicEntropy });
-    const again = deriveFairDice({ serverSeedHex: seed, matchId: 'match-42', rollIndex: 7, publicEntropy });
+    const first = deriveFairDice({
+      serverSeedHex: seed,
+      matchId: 'match-42',
+      rollIndex: 7,
+      publicEntropy,
+    });
+    const again = deriveFairDice({
+      serverSeedHex: seed,
+      matchId: 'match-42',
+      rollIndex: 7,
+      publicEntropy,
+    });
     expect(first).toBe(again);
     expect(first).toBeGreaterThanOrEqual(1);
     expect(first).toBeLessThanOrEqual(6);

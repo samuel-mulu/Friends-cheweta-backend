@@ -301,7 +301,9 @@ export class MatchCreationService {
       ...match,
       stakeAmountMinor: match.stakeAmountMinor.toString(),
       gameMode: { ...match.gameMode, stakeAmountMinor: match.gameMode.stakeAmountMinor.toString() },
-      entries: match.entries?.map((entry) => ({ ...entry, amountMinor: entry.amountMinor.toString() })) ?? [],
+      entries:
+        match.entries?.map((entry) => ({ ...entry, amountMinor: entry.amountMinor.toString() })) ??
+        [],
     };
   }
 }

@@ -24,7 +24,11 @@ import {
 } from './dama.runtime.types';
 
 /** A new match: `lightUserId` moves first. Color assignment is the caller's choice. */
-export function createDamaMatch(matchId: string, lightUserId: string, darkUserId: string): DamaMatchRuntimeState {
+export function createDamaMatch(
+  matchId: string,
+  lightUserId: string,
+  darkUserId: string,
+): DamaMatchRuntimeState {
   const game: DamaGameState = {
     matchId,
     rulesVersion: DAMA_ET_V1,
@@ -64,7 +68,10 @@ export function currentLegalMoves(state: DamaMatchRuntimeState): DamaMove[] {
  * Pure and deterministic: validates `command` against `state` and returns the
  * next state plus the events to publish. Never mutates its input.
  */
-export function executeDamaCommand(state: DamaMatchRuntimeState, command: DamaRuntimeCommand): DamaRuntimeResult {
+export function executeDamaCommand(
+  state: DamaMatchRuntimeState,
+  command: DamaRuntimeCommand,
+): DamaRuntimeResult {
   if (!command.commandId.trim()) throw new Error('COMMAND_ID_REQUIRED');
   const { game } = state;
   if (game.phase !== DamaPhase.PLAYING) throw new Error('MATCH_NOT_PLAYING');
@@ -106,7 +113,14 @@ function move(state: DamaMatchRuntimeState, command: DamaMoveCommand): DamaRunti
     currentPlayerId: opponent.userId,
   };
   const events: DamaRuntimeEvent[] = [
-    { type: DamaRuntimeEventType.PIECE_MOVED, matchId: game.matchId, version, playerId: command.playerId, move: chosen, promoted },
+    {
+      type: DamaRuntimeEventType.PIECE_MOVED,
+      matchId: game.matchId,
+      version,
+      playerId: command.playerId,
+      move: chosen,
+      promoted,
+    },
   ];
 
   const replies = legalMoves(board, opponent.color);
@@ -141,14 +155,23 @@ function resign(state: DamaMatchRuntimeState, command: DamaResignCommand): DamaR
     commandId: command.commandId,
     state: { game: next },
     events: [
-      { type: DamaRuntimeEventType.PLAYER_RESIGNED, matchId: game.matchId, version, playerId: command.playerId },
+      {
+        type: DamaRuntimeEventType.PLAYER_RESIGNED,
+        matchId: game.matchId,
+        version,
+        playerId: command.playerId,
+      },
       finishedEvent(next),
     ],
   };
 }
 
 /** `winnerId` null means a draw. */
-function finish(game: DamaGameState, winnerId: string | null, reason: DamaFinishReason): DamaGameState {
+function finish(
+  game: DamaGameState,
+  winnerId: string | null,
+  reason: DamaFinishReason,
+): DamaGameState {
   const loserId = game.players.find((player) => player.userId !== winnerId)!.userId;
   return {
     ...game,

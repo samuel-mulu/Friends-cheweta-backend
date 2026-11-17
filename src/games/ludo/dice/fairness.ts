@@ -25,7 +25,10 @@ export function createSeedCommitment(serverSeedHex: string): string {
   return createHash('sha256').update(Buffer.from(serverSeedHex, 'hex')).digest('hex');
 }
 
-export function verifySeedCommitment(serverSeedHex: string, expectedCommitmentHex: string): boolean {
+export function verifySeedCommitment(
+  serverSeedHex: string,
+  expectedCommitmentHex: string,
+): boolean {
   if (!/^[0-9a-f]{64}$/i.test(expectedCommitmentHex)) return false;
   const actual = Buffer.from(createSeedCommitment(serverSeedHex), 'hex');
   const expected = Buffer.from(expectedCommitmentHex, 'hex');
@@ -41,7 +44,10 @@ export function combineParticipantEntropy(values: readonly string[]): string {
   if (values.length === 0 || values.some((value) => !value)) {
     throw new Error('At least one non-empty participant entropy value is required.');
   }
-  const canonical = [...values].sort().map((value) => `${value.length}:${value}`).join('|');
+  const canonical = [...values]
+    .sort()
+    .map((value) => `${value.length}:${value}`)
+    .join('|');
   return createHash('sha256').update(canonical).digest('hex');
 }
 
@@ -65,7 +71,9 @@ export function deriveFairDice(input: FairDiceProofInput): number {
       String(input.rollIndex),
       String(attempt),
     ].join(':');
-    const digest = createHmac('sha256', Buffer.from(input.serverSeedHex, 'hex')).update(context).digest();
+    const digest = createHmac('sha256', Buffer.from(input.serverSeedHex, 'hex'))
+      .update(context)
+      .digest();
     for (let offset = 0; offset + 4 <= digest.length; offset += 4) {
       const value = digest.readUInt32BE(offset);
       if (value < ACCEPT_LIMIT) return (value % 6) + 1;

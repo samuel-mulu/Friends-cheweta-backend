@@ -15,7 +15,9 @@ export class NotificationsService {
     dedupeKey?: string;
   }) {
     if (input.dedupeKey) {
-      const existing = await this.prisma.notification.findUnique({ where: { dedupeKey: input.dedupeKey } });
+      const existing = await this.prisma.notification.findUnique({
+        where: { dedupeKey: input.dedupeKey },
+      });
       if (existing) return existing;
     }
     try {
@@ -30,8 +32,14 @@ export class NotificationsService {
         },
       });
     } catch (error) {
-      if (input.dedupeKey && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        return this.prisma.notification.findUniqueOrThrow({ where: { dedupeKey: input.dedupeKey } });
+      if (
+        input.dedupeKey &&
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        return this.prisma.notification.findUniqueOrThrow({
+          where: { dedupeKey: input.dedupeKey },
+        });
       }
       throw error;
     }
@@ -52,7 +60,11 @@ export class NotificationsService {
       where: { id, userId },
       data: { readAt: new Date() },
     });
-    if (changed.count !== 1) throw new NotFoundException({ code: 'NOTIFICATION_NOT_FOUND', message: 'Notification not found.' });
+    if (changed.count !== 1)
+      throw new NotFoundException({
+        code: 'NOTIFICATION_NOT_FOUND',
+        message: 'Notification not found.',
+      });
     return this.prisma.notification.findUniqueOrThrow({ where: { id } });
   }
 

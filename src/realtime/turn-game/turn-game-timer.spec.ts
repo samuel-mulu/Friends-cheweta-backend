@@ -24,7 +24,10 @@ async function createHarness() {
     ],
   };
   const prisma = {
-    match: { findUnique: jest.fn(async () => ({ ...match })), updateMany: jest.fn(async () => ({ count: 1 })) },
+    match: {
+      findUnique: jest.fn(async () => ({ ...match })),
+      updateMany: jest.fn(async () => ({ count: 1 })),
+    },
     matchParticipant: { findUnique: jest.fn(async () => ({ id: 'p' })) },
   };
   const history = {
@@ -42,9 +45,20 @@ async function createHarness() {
     { settleMatchResult: jest.fn(), settleDraw: jest.fn() } as any,
     history as any,
   );
-  const publisher = { publishTurnGame: jest.fn(), publishRoom: jest.fn(), matchRoom: (id: string) => `match:${id}` };
+  const publisher = {
+    publishTurnGame: jest.fn(),
+    publishRoom: jest.fn(),
+    matchRoom: (id: string) => `match:${id}`,
+  };
   const joins = new MatchJoinTracker(redis);
-  const timer = new DamaTurnTimerService(runtime, redis, prisma as any, publisher as any, joins, config as any);
+  const timer = new DamaTurnTimerService(
+    runtime,
+    redis,
+    prisma as any,
+    publisher as any,
+    joins,
+    config as any,
+  );
 
   /** Both players join, then the running turn clock is moved into the past. */
   const expireTurn = async () => {
@@ -54,7 +68,9 @@ async function createHarness() {
     const past = Date.now() - 1000;
     const expired: TurnTiming = { ...timing, turnEndsAt: new Date(past).toISOString() };
     await redis.setJson(redis.key('runtime', 'dama', MATCH, 'timing'), expired, 600);
-    await redis.raw().zAdd(redis.key('runtime', 'dama', 'turn-deadlines'), [{ score: past, value: MATCH }]);
+    await redis
+      .raw()
+      .zAdd(redis.key('runtime', 'dama', 'turn-deadlines'), [{ score: past, value: MATCH }]);
     return state;
   };
   return { redis, store, runtime, timer, publisher, cleanup, expireTurn };

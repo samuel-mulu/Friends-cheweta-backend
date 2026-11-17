@@ -368,8 +368,10 @@ export class LudoMatchRuntime {
     const earnedExtraRoll =
       (diceValue === 6 && rules.sixGrantsExtraRoll) ||
       (result.resolution.capturedTokenIds.length > 0 && rules.captureGrantsExtraRoll) ||
-      (result.resolution.tokenAfter.state === LudoTokenState.FINISHED && rules.finishGrantsExtraRoll);
-    const mayRollAgain = earnedExtraRoll && !nowFinished && !this.state.resignedPlayerIds.includes(command.playerId);
+      (result.resolution.tokenAfter.state === LudoTokenState.FINISHED &&
+        rules.finishGrantsExtraRoll);
+    const mayRollAgain =
+      earnedExtraRoll && !nowFinished && !this.state.resignedPlayerIds.includes(command.playerId);
 
     if (mayRollAgain) {
       next.turnPhase = LudoTurnPhase.WAITING_FOR_ROLL;

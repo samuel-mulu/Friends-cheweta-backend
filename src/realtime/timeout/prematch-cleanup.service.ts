@@ -27,7 +27,9 @@ export class PrematchCleanupService {
     config: ConfigService<AppEnv, true>,
   ) {
     this.readyNoShowSeconds = config.get('GAME_READY_NO_SHOW_SECONDS', { infer: true });
-    this.prematchOrphanTimeoutSeconds = config.get('PREMATCH_ORPHAN_TIMEOUT_SECONDS', { infer: true });
+    this.prematchOrphanTimeoutSeconds = config.get('PREMATCH_ORPHAN_TIMEOUT_SECONDS', {
+      infer: true,
+    });
   }
 
   async processReadyNoShows(): Promise<void> {
@@ -47,7 +49,9 @@ export class PrematchCleanupService {
         if (!game || (await game.timer.allJoined(match.id))) continue;
         await this.cancelBeforeStart(match.id, 'MATCH_READY_NO_SHOW', 'READY_NO_SHOW_TIMEOUT');
       } catch (error) {
-        this.logger.warn(`Ready no-show cleanup failed for ${match.id}: ${(error as Error).message}`);
+        this.logger.warn(
+          `Ready no-show cleanup failed for ${match.id}: ${(error as Error).message}`,
+        );
       }
     }
   }
@@ -73,14 +77,21 @@ export class PrematchCleanupService {
     let cancelled = 0;
     for (const candidate of candidates) {
       try {
-        const done = await this.cancelBeforeStart(candidate.id, 'PREMATCH_ORPHAN_TIMEOUT', 'PREMATCH_ORPHAN_TIMEOUT', {
-          expectedStatuses: PREMATCH_ORPHAN_STATUSES,
-        });
+        const done = await this.cancelBeforeStart(
+          candidate.id,
+          'PREMATCH_ORPHAN_TIMEOUT',
+          'PREMATCH_ORPHAN_TIMEOUT',
+          {
+            expectedStatuses: PREMATCH_ORPHAN_STATUSES,
+          },
+        );
         if (!done) continue;
         cancelled += 1;
         this.logger.log(`prematch_orphan_cancelled match=${candidate.id}`);
       } catch (error) {
-        this.logger.warn(`Prematch orphan cleanup failed for ${candidate.id}: ${(error as Error).message}`);
+        this.logger.warn(
+          `Prematch orphan cleanup failed for ${candidate.id}: ${(error as Error).message}`,
+        );
       }
     }
     return cancelled;
@@ -101,9 +112,17 @@ export class PrematchCleanupService {
 
     // Whichever game it was; discarding a missing key is a no-op.
     for (const game of this.games.all()) await game.timer.discard(matchId);
-    const players = await this.prisma.matchParticipant.findMany({ where: { matchId }, select: { userId: true } });
+    const players = await this.prisma.matchParticipant.findMany({
+      where: { matchId },
+      select: { userId: true },
+    });
     for (const player of players) {
-      this.publisher.publishUser(player.userId, 'match:cancelled', { matchId, reason: clientReason }, matchId);
+      this.publisher.publishUser(
+        player.userId,
+        'match:cancelled',
+        { matchId, reason: clientReason },
+        matchId,
+      );
     }
     return true;
   }

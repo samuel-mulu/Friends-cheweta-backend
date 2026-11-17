@@ -75,10 +75,7 @@ export type ResignCommand = LudoRuntimeCommandBase & {
 };
 
 export type LudoRuntimeCommand =
-  | RollForStartCommand
-  | RollDiceCommand
-  | MoveTokenCommand
-  | ResignCommand;
+  RollForStartCommand | RollDiceCommand | MoveTokenCommand | ResignCommand;
 
 export type LudoRuntimeResult = {
   commandId: string;

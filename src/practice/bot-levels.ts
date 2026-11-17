@@ -9,10 +9,9 @@ import { PRACTICE_BOTS, PracticeLevel } from './practice.constants';
 export class BotLevelCache {
   private readonly known = new Map<string, PracticeLevel | null>();
   private readonly levelByPhone = new Map(
-    (Object.entries(PRACTICE_BOTS) as Array<[PracticeLevel, { phone: string }]>).map(([level, bot]) => [
-      normalizeEthiopianPhone(bot.phone),
-      level,
-    ]),
+    (Object.entries(PRACTICE_BOTS) as Array<[PracticeLevel, { phone: string }]>).map(
+      ([level, bot]) => [normalizeEthiopianPhone(bot.phone), level],
+    ),
   );
 
   constructor(private readonly prisma: PrismaService) {}
@@ -26,7 +25,10 @@ export class BotLevelCache {
       });
       for (const id of unknown) {
         const user = users.find((candidate) => candidate.id === id);
-        this.known.set(id, user?.isBot ? (this.levelByPhone.get(user.phoneNumber) ?? 'NORMAL') : null);
+        this.known.set(
+          id,
+          user?.isBot ? (this.levelByPhone.get(user.phoneNumber) ?? 'NORMAL') : null,
+        );
       }
     }
     const levels = new Map<string, PracticeLevel>();

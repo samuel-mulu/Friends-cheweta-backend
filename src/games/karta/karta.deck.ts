@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { KARTA_RANKS, KARTA_SUITS, KartaCard, KartaRank } from './karta.types';
 
-export const fullDeck = (): KartaCard[] => KARTA_RANKS.flatMap((rank) => KARTA_SUITS.map((suit) => `${rank}${suit}`));
+export const fullDeck = (): KartaCard[] =>
+  KARTA_RANKS.flatMap((rank) => KARTA_SUITS.map((suit) => `${rank}${suit}`));
 
 export const rankOf = (card: KartaCard): KartaRank => card.slice(0, -1) as KartaRank;
 

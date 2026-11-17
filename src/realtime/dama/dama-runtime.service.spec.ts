@@ -29,7 +29,9 @@ async function createHarness() {
     },
     matchParticipant: {
       findUnique: jest.fn(async ({ where }: any) =>
-        match.participants.some((p) => p.userId === where.matchId_userId.userId) ? { id: 'p' } : null,
+        match.participants.some((p) => p.userId === where.matchId_userId.userId)
+          ? { id: 'p' }
+          : null,
       ),
     },
   };
@@ -43,7 +45,10 @@ async function createHarness() {
     saveCheckpoint: jest.fn(async () => undefined),
     getCheckpoint: jest.fn(async () => null),
   };
-  const settlement = { settleMatchResult: jest.fn(async () => undefined), settleDraw: jest.fn(async () => undefined) };
+  const settlement = {
+    settleMatchResult: jest.fn(async () => undefined),
+    settleDraw: jest.fn(async () => undefined),
+  };
   const config = { get: (key: string) => (key.startsWith('REDIS_') ? 3600 : undefined) };
   const store = new DamaRuntimeRepository(redis, config as any);
   const service = new DamaRuntimeService(
@@ -54,7 +59,16 @@ async function createHarness() {
     settlement as any,
     history as any,
   );
-  return { service, store, prisma, history, settlement, persisted, cleanup, slowPersistence: (ms: number) => (persistDelayMs = ms) };
+  return {
+    service,
+    store,
+    prisma,
+    history,
+    settlement,
+    persisted,
+    cleanup,
+    slowPersistence: (ms: number) => (persistDelayMs = ms),
+  };
 }
 
 describe('DamaRuntimeService (real Redis)', () => {
@@ -79,14 +93,23 @@ describe('DamaRuntimeService (real Redis)', () => {
     expect(state.game.currentPlayerId).toBe(light);
     expect(h.history.saveCheckpoint).toHaveBeenCalledTimes(1);
     expect(h.service.legalMoves(state)).toHaveLength(7);
-    await expect(h.service.getSnapshot(MATCH, 'stranger')).rejects.toMatchObject({ response: { code: 'MATCH_ACCESS_DENIED' } });
+    await expect(h.service.getSnapshot(MATCH, 'stranger')).rejects.toMatchObject({
+      response: { code: 'MATCH_ACCESS_DENIED' },
+    });
   });
 
   it('answers before the database write, keeps writes in order, and is idempotent', async () => {
     const { light, dark } = await lightAndDark();
     h.slowPersistence(150);
     // c3-d4 (18 → 27) is legal for whoever drew Light.
-    const lightMove = { matchId: MATCH, type: 'MOVE' as const, playerId: light, commandId: 'cmd-1', expectedVersion: 0, path: [18, 27] };
+    const lightMove = {
+      matchId: MATCH,
+      type: 'MOVE' as const,
+      playerId: light,
+      commandId: 'cmd-1',
+      expectedVersion: 0,
+      path: [18, 27],
+    };
     const startedAt = Date.now();
     const first = await h.service.execute(lightMove);
     expect(Date.now() - startedAt).toBeLessThan(150);
@@ -96,7 +119,14 @@ describe('DamaRuntimeService (real Redis)', () => {
     const again = await h.service.execute(lightMove);
     expect(again).toMatchObject({ duplicate: true, events: [] });
 
-    await h.service.execute({ matchId: MATCH, type: 'MOVE', playerId: dark, commandId: 'cmd-2', expectedVersion: 1, path: [45, 36] });
+    await h.service.execute({
+      matchId: MATCH,
+      type: 'MOVE',
+      playerId: dark,
+      commandId: 'cmd-2',
+      expectedVersion: 1,
+      path: [45, 36],
+    });
     await h.service.flushPersistence(MATCH);
     expect(h.persisted).toEqual([1, 2]);
     expect(h.prisma.match.updateMany).toHaveBeenCalledWith(
@@ -106,11 +136,19 @@ describe('DamaRuntimeService (real Redis)', () => {
 
   it('a resignation is settled as a win for the opponent', async () => {
     const { light, dark } = await lightAndDark();
-    await h.service.execute({ matchId: MATCH, type: 'RESIGN', playerId: dark, commandId: 'r', expectedVersion: 0 });
+    await h.service.execute({
+      matchId: MATCH,
+      type: 'RESIGN',
+      playerId: dark,
+      commandId: 'r',
+      expectedVersion: 0,
+    });
     await h.service.flushPersistence(MATCH);
     expect(h.settlement.settleMatchResult).toHaveBeenCalledWith(MATCH, [light, dark]);
     expect(h.prisma.match.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: MatchStatus.FINISHING, isDraw: false }) }),
+      expect.objectContaining({
+        data: expect.objectContaining({ status: MatchStatus.FINISHING, isDraw: false }),
+      }),
     );
   });
 
@@ -122,7 +160,14 @@ describe('DamaRuntimeService (real Redis)', () => {
     near.game.board = boardFrom({ 0: 'L', 15: 'D', 50: 'd' });
     await h.store.saveSnapshotIfAbsent(MATCH, near);
 
-    const result = await h.service.execute({ matchId: MATCH, type: 'MOVE', playerId: 'A', commandId: 'd', expectedVersion: 50, path: [0, 9] });
+    const result = await h.service.execute({
+      matchId: MATCH,
+      type: 'MOVE',
+      playerId: 'A',
+      commandId: 'd',
+      expectedVersion: 50,
+      path: [0, 9],
+    });
     expect(result.state.game.result).toBe('DRAW');
     await h.service.flushPersistence(MATCH);
     expect(h.settlement.settleDraw).toHaveBeenCalledWith(MATCH);

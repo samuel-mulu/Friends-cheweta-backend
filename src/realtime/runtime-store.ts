@@ -47,7 +47,10 @@ export class RuntimeStore<TState, TEvent> {
   async saveSnapshotIfAbsent(matchId: string, state: TState): Promise<TState> {
     const created = await this.redis
       .raw()
-      .set(this.snapshotKey(matchId), JSON.stringify(state), { NX: true, EX: this.runtimeTtlSeconds });
+      .set(this.snapshotKey(matchId), JSON.stringify(state), {
+        NX: true,
+        EX: this.runtimeTtlSeconds,
+      });
     if (created === 'OK') return state;
     return (await this.getSnapshot(matchId)) ?? state;
   }
@@ -63,10 +66,17 @@ export class RuntimeStore<TState, TEvent> {
     state: TState;
     resultingVersion: number;
   }): Promise<void> {
-    const record: StoredCommandRecord = { fingerprint: input.fingerprint, resultingVersion: input.resultingVersion };
+    const record: StoredCommandRecord = {
+      fingerprint: input.fingerprint,
+      resultingVersion: input.resultingVersion,
+    };
     const tx = this.redis.raw().multi();
-    tx.set(this.snapshotKey(input.matchId), JSON.stringify(input.state), { EX: this.runtimeTtlSeconds });
-    tx.set(this.commandKey(input.matchId, input.commandId), JSON.stringify(record), { EX: this.commandTtlSeconds });
+    tx.set(this.snapshotKey(input.matchId), JSON.stringify(input.state), {
+      EX: this.runtimeTtlSeconds,
+    });
+    tx.set(this.commandKey(input.matchId, input.commandId), JSON.stringify(record), {
+      EX: this.commandTtlSeconds,
+    });
     await tx.exec();
   }
 

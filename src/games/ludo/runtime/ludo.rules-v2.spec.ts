@@ -106,7 +106,10 @@ describe('V3 plays the popular rules on the standard board', () => {
     roll(runtime, 0);
     const result = move(runtime, 'RED-1', 1);
     expect(types(result.events)).toEqual(
-      expect.arrayContaining([LudoRuntimeEventType.TOKEN_FINISHED, LudoRuntimeEventType.EXTRA_ROLL_GRANTED]),
+      expect.arrayContaining([
+        LudoRuntimeEventType.TOKEN_FINISHED,
+        LudoRuntimeEventType.EXTRA_ROLL_GRANTED,
+      ]),
     );
     expect(runtime.getState().game.players[0].tokens[0]).toMatchObject({
       progress: 56,

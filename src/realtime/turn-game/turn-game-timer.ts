@@ -34,7 +34,11 @@ function isResourceBusy(error: unknown): boolean {
  * limit the player forfeits. Before play starts (Ludo's starting roll) a
  * timeout simply plays for everyone still pending, without strikes.
  */
-export class TurnGameTimer<S extends TurnGameState, C extends TurnGameCommand, E extends TurnGameEvent> {
+export class TurnGameTimer<
+  S extends TurnGameState,
+  C extends TurnGameCommand,
+  E extends TurnGameEvent,
+> {
   private readonly logger: Logger;
   private readonly turnSecondsByMatch = new Map<string, number>();
 
@@ -82,7 +86,9 @@ export class TurnGameTimer<S extends TurnGameState, C extends TurnGameCommand, E
       this.joins.joinedCount(matchId),
       state ? Promise.resolve(state) : this.runtime.getStoredSnapshot(matchId),
     ]);
-    const players = snapshot?.game.players.length ?? (await this.prisma.matchParticipant.count({ where: { matchId } }));
+    const players =
+      snapshot?.game.players.length ??
+      (await this.prisma.matchParticipant.count({ where: { matchId } }));
     return players > 0 && joined >= players;
   }
 
@@ -106,7 +112,9 @@ export class TurnGameTimer<S extends TurnGameState, C extends TurnGameCommand, E
 
   async processDue(): Promise<void> {
     const now = Date.now();
-    const matchIds = await this.redis.raw().zRangeByScore(this.queueKey(), 0, now, { LIMIT: { offset: 0, count: 25 } });
+    const matchIds = await this.redis
+      .raw()
+      .zRangeByScore(this.queueKey(), 0, now, { LIMIT: { offset: 0, count: 25 } });
     for (const matchId of matchIds) {
       try {
         await this.processTimeout(matchId, now);
@@ -114,7 +122,9 @@ export class TurnGameTimer<S extends TurnGameState, C extends TurnGameCommand, E
         // A player's command holds the match right now: the deadline stays
         // queued and the next tick looks again.
         if (isResourceBusy(error)) continue;
-        this.logger.warn(`${this.key}_timeout_failed match=${matchId} reason=${(error as Error).message}`);
+        this.logger.warn(
+          `${this.key}_timeout_failed match=${matchId} reason=${(error as Error).message}`,
+        );
       }
     }
   }
@@ -125,13 +135,16 @@ export class TurnGameTimer<S extends TurnGameState, C extends TurnGameCommand, E
     const definition = this.runtime.definition;
     if (!state || definition.isFinished(state)) return;
     if (definition.canResign && !definition.canResign(state, userId)) return;
-    const result = await this.runtime.execute({
-      ...definition.resignCommand(),
-      matchId,
-      commandId: `disconnect:${matchId}:${userId}:${state.game.version}`,
-      playerId: userId,
-      expectedVersion: state.game.version,
-    } as unknown as C & { matchId: string }, NO_WAIT);
+    const result = await this.runtime.execute(
+      {
+        ...definition.resignCommand(),
+        matchId,
+        commandId: `disconnect:${matchId}:${userId}:${state.game.version}`,
+        playerId: userId,
+        expectedVersion: state.game.version,
+      } as unknown as C & { matchId: string },
+      NO_WAIT,
+    );
     this.publisher.publishTurnGame(result, definition);
     const timing = await this.redis.getJson<TurnTiming>(this.timingKey(matchId));
     await this.schedule(result.state, timing?.strikes ?? {});
@@ -140,7 +153,12 @@ export class TurnGameTimer<S extends TurnGameState, C extends TurnGameCommand, E
   /** A match cancelled before it started: drop its live state and clock. */
   async discard(matchId: string): Promise<void> {
     await this.runtime.discardRuntime(matchId);
-    await this.redis.raw().multi().zRem(this.queueKey(), matchId).del(this.timingKey(matchId)).exec();
+    await this.redis
+      .raw()
+      .multi()
+      .zRem(this.queueKey(), matchId)
+      .del(this.timingKey(matchId))
+      .exec();
     this.turnSecondsByMatch.delete(matchId);
   }
 
@@ -174,17 +192,22 @@ export class TurnGameTimer<S extends TurnGameState, C extends TurnGameCommand, E
     const forfeit = strikes[playerId] >= this.maxStrikes;
     const body = forfeit ? definition.resignCommand() : definition.autoCommand(state, playerId);
     if (!body) {
-      this.logger.warn(`${this.key}_timeout_without_auto_command match=${matchId} player=${playerId}`);
+      this.logger.warn(
+        `${this.key}_timeout_without_auto_command match=${matchId} player=${playerId}`,
+      );
       await this.redis.raw().zRem(this.queueKey(), matchId);
       return;
     }
-    const result: TurnGameExecution<S, E> = await this.runtime.execute({
-      ...body,
-      matchId,
-      playerId,
-      expectedVersion: state.game.version,
-      commandId: `timeout:${forfeit ? 'forfeit' : 'auto'}:${matchId}:${state.game.version}`,
-    } as unknown as C & { matchId: string }, NO_WAIT);
+    const result: TurnGameExecution<S, E> = await this.runtime.execute(
+      {
+        ...body,
+        matchId,
+        playerId,
+        expectedVersion: state.game.version,
+        commandId: `timeout:${forfeit ? 'forfeit' : 'auto'}:${matchId}:${state.game.version}`,
+      } as unknown as C & { matchId: string },
+      NO_WAIT,
+    );
     this.publisher.publishTurnGame(result, definition);
     // Tell everyone the server played for an absent player, with the strike
     // count, so a forfeit at the limit is never a surprise.
@@ -205,13 +228,16 @@ export class TurnGameTimer<S extends TurnGameState, C extends TurnGameCommand, E
       if (!current || !definition.isPreGame?.(current)) break;
       const body = definition.autoCommand(current, playerId);
       if (!body) continue;
-      const result = await this.runtime.execute({
-        ...body,
-        matchId,
-        playerId,
-        expectedVersion: current.game.version,
-        commandId: `timeout:start:${matchId}:${playerId}:${current.game.version}`,
-      } as unknown as C & { matchId: string }, NO_WAIT);
+      const result = await this.runtime.execute(
+        {
+          ...body,
+          matchId,
+          playerId,
+          expectedVersion: current.game.version,
+          commandId: `timeout:start:${matchId}:${playerId}:${current.game.version}`,
+        } as unknown as C & { matchId: string },
+        NO_WAIT,
+      );
       this.publisher.publishTurnGame(result, definition);
     }
   }
@@ -230,7 +256,10 @@ export class TurnGameTimer<S extends TurnGameState, C extends TurnGameCommand, E
       return this.save({ ...this.base(state, strikes), turnEndsAt: null });
     }
     const endsAtMs = Date.now() + (await this.turnSeconds(matchId)) * 1000;
-    const timing: TurnTiming = { ...this.base(state, strikes), turnEndsAt: new Date(endsAtMs).toISOString() };
+    const timing: TurnTiming = {
+      ...this.base(state, strikes),
+      turnEndsAt: new Date(endsAtMs).toISOString(),
+    };
     await this.redis
       .raw()
       .multi()
@@ -265,7 +294,8 @@ export class TurnGameTimer<S extends TurnGameState, C extends TurnGameCommand, E
       where: { id: matchId },
       select: { gameMode: { select: { turnDurationSeconds: true } } },
     });
-    const seconds = match?.gameMode.turnDurationSeconds ?? this.runtime.definition.defaultTurnSeconds;
+    const seconds =
+      match?.gameMode.turnDurationSeconds ?? this.runtime.definition.defaultTurnSeconds;
     this.turnSecondsByMatch.set(matchId, seconds);
     return seconds;
   }

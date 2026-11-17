@@ -1,5 +1,10 @@
 import { Logger } from '@nestjs/common';
-import { OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, WebSocketGateway } from '@nestjs/websockets';
+import {
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  OnGatewayInit,
+  WebSocketGateway,
+} from '@nestjs/websockets';
 import { randomUUID } from 'node:crypto';
 import { Server } from 'socket.io';
 import { ChallengeService } from '../../challenge/challenge.service';

@@ -1,8 +1,19 @@
 import { UseFilters, UsePipes, ValidationPipe } from '@nestjs/common';
-import { ConnectedSocket, MessageBody, SubscribeMessage, WebSocketGateway } from '@nestjs/websockets';
+import {
+  ConnectedSocket,
+  MessageBody,
+  SubscribeMessage,
+  WebSocketGateway,
+} from '@nestjs/websockets';
 import { IsIn } from 'class-validator';
 import { ChatService } from '../../chat/chat.service';
-import { KARTA_RANKS, KartaMatchRuntimeState, KartaRank, KartaRuntimeCommand, KartaRuntimeEvent } from '../../games/karta';
+import {
+  KARTA_RANKS,
+  KartaMatchRuntimeState,
+  KartaRank,
+  KartaRuntimeCommand,
+  KartaRuntimeEvent,
+} from '../../games/karta';
 import { LudoCommandDto, MatchJoinDto } from '../dto/ludo-command.dto';
 import { RealtimePublisherService } from '../realtime-publisher.service';
 import { AuthenticatedSocket } from '../realtime.types';
@@ -19,8 +30,17 @@ export class KartaCallDto extends LudoCommandDto {
 @WebSocketGateway({ namespace: '/game' })
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
 @UseFilters(new WsAckExceptionFilter())
-export class KartaGateway extends TurnGameGateway<KartaMatchRuntimeState, KartaRuntimeCommand, KartaRuntimeEvent> {
-  constructor(runtime: KartaRuntimeService, timer: KartaTurnTimerService, publisher: RealtimePublisherService, chat: ChatService) {
+export class KartaGateway extends TurnGameGateway<
+  KartaMatchRuntimeState,
+  KartaRuntimeCommand,
+  KartaRuntimeEvent
+> {
+  constructor(
+    runtime: KartaRuntimeService,
+    timer: KartaTurnTimerService,
+    publisher: RealtimePublisherService,
+    chat: ChatService,
+  ) {
     super(runtime, timer, publisher, chat);
   }
 

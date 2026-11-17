@@ -24,7 +24,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         // exhaustion/connection errors are rare and worth a log line; this
         // does not add any polling or dashboard.
         onPoolError: (error) => PrismaService.logger.warn(`Postgres pool error: ${error.message}`),
-        onConnectionError: (error) => PrismaService.logger.warn(`Postgres connection error: ${error.message}`),
+        onConnectionError: (error) =>
+          PrismaService.logger.warn(`Postgres connection error: ${error.message}`),
       },
     );
     super({ adapter });

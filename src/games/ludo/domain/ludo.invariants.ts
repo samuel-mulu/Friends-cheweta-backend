@@ -13,8 +13,10 @@ import { LudoGameState, LudoTokenState } from './ludo.types';
 
 export function assertValidLudoState(state: LudoGameState): void {
   if (!isLudoRulesVersion(state.rulesVersion)) throw new Error('Unsupported Ludo rules version.');
-  if (!Number.isInteger(state.version) || state.version < 0) throw new Error('State version must be non-negative.');
-  if (state.players.length < 2 || state.players.length > 4) throw new Error('Invalid player count.');
+  if (!Number.isInteger(state.version) || state.version < 0)
+    throw new Error('State version must be non-negative.');
+  if (state.players.length < 2 || state.players.length > 4)
+    throw new Error('Invalid player count.');
   if (state.tokensToWin !== undefined && !isValidTokensToWin(state.tokensToWin)) {
     throw new Error('Invalid tokensToWin.');
   }
@@ -27,13 +29,15 @@ export function assertValidLudoState(state: LudoGameState): void {
   for (const player of state.players) {
     if (userIds.has(player.userId)) throw new Error('Duplicate player.');
     if (colors.has(player.color)) throw new Error('Duplicate player color.');
-    if (player.tokens.length !== LUDO_CLASSIC_V1.tokensPerPlayer) throw new Error('Invalid token count.');
+    if (player.tokens.length !== LUDO_CLASSIC_V1.tokensPerPlayer)
+      throw new Error('Invalid token count.');
     userIds.add(player.userId);
     colors.add(player.color);
 
     for (const token of player.tokens) {
       if (tokenIds.has(token.id)) throw new Error('Duplicate token id.');
-      if (token.ownerId !== player.userId || token.color !== player.color) throw new Error('Token ownership mismatch.');
+      if (token.ownerId !== player.userId || token.color !== player.color)
+        throw new Error('Token ownership mismatch.');
       tokenIds.add(token.id);
 
       const valid =
@@ -72,7 +76,10 @@ export function assertValidLudoState(state: LudoGameState): void {
   if (state.currentPlayerId !== null && !userIds.has(state.currentPlayerId)) {
     throw new Error('Current player is not part of this game.');
   }
-  if (state.diceValue !== null && (!Number.isInteger(state.diceValue) || state.diceValue < 1 || state.diceValue > 6)) {
+  if (
+    state.diceValue !== null &&
+    (!Number.isInteger(state.diceValue) || state.diceValue < 1 || state.diceValue > 6)
+  ) {
     throw new Error('Invalid dice value.');
   }
   if (state.consecutiveSixes < 0 || state.consecutiveSixes >= LUDO_CLASSIC_V1.maxConsecutiveSixes) {

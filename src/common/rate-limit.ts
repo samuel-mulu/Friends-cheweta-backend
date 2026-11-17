@@ -8,7 +8,9 @@ const MINUTE_MS = 60_000;
  * runaway client or a scripted flood, not to shape normal use. Counters are
  * in memory, so with several API containers each one counts on its own.
  */
-export const HTTP_RATE_LIMIT: ThrottlerModuleOptions = [{ name: 'default', ttl: MINUTE_MS, limit: 600 }];
+export const HTTP_RATE_LIMIT: ThrottlerModuleOptions = [
+  { name: 'default', ttl: MINUTE_MS, limit: 600 },
+];
 
 /** Login, register, refresh: password guessing and account farming. */
 export const AUTH_RATE_LIMIT = { default: { ttl: MINUTE_MS, limit: 30 } };

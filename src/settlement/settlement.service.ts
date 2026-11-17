@@ -250,18 +250,28 @@ export class SettlementService {
         });
         await tx.match.update({
           where: { id: matchId },
-          data: { status: MatchStatus.FINISHED, finishedAt: new Date(), winnerOrder: [], isDraw: true },
+          data: {
+            status: MatchStatus.FINISHED,
+            finishedAt: new Date(),
+            winnerOrder: [],
+            isDraw: true,
+          },
         });
         if (match.source !== 'PRACTICE') followUpPlayers = match.participants.map((p) => p.userId);
         return this.serialize(settlement);
       }, SETTLEMENT_TRANSACTION_OPTIONS),
     );
-    if (followUpPlayers.length > 0) void this.runPostSettlementTasks(matchId, followUpPlayers, true);
+    if (followUpPlayers.length > 0)
+      void this.runPostSettlementTasks(matchId, followUpPlayers, true);
     return settlement;
   }
 
   /** `userIds`: winner order, or both players for a draw. */
-  private async runPostSettlementTasks(matchId: string, userIds: string[], draw: boolean): Promise<void> {
+  private async runPostSettlementTasks(
+    matchId: string,
+    userIds: string[],
+    draw: boolean,
+  ): Promise<void> {
     // Independent steps: one failing never skips the others.
     const step = async (name: string, run: () => Promise<unknown>) => {
       try {

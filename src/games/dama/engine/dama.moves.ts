@@ -108,7 +108,10 @@ function captureSequences(board: DamaBoard, from: number): DamaMove[] {
 }
 
 /** The board after `move`; crowns a man that ends on its far row. */
-export function applyMove(board: DamaBoard, move: DamaMove): { board: DamaBoard; promoted: boolean } {
+export function applyMove(
+  board: DamaBoard,
+  move: DamaMove,
+): { board: DamaBoard; promoted: boolean } {
   const cells = board.split('');
   const from = move.path[0];
   const to = move.path[move.path.length - 1];
@@ -122,5 +125,7 @@ export function applyMove(board: DamaBoard, move: DamaMove): { board: DamaBoard;
 }
 
 export function sameMove(a: DamaMove, b: { path: number[] }): boolean {
-  return a.path.length === b.path.length && a.path.every((square, index) => square === b.path[index]);
+  return (
+    a.path.length === b.path.length && a.path.every((square, index) => square === b.path[index])
+  );
 }

@@ -1,4 +1,10 @@
-import { ForbiddenException, Logger, NotFoundException, OnApplicationShutdown, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Logger,
+  NotFoundException,
+  OnApplicationShutdown,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { GameEntryService } from '../../game-entry/game-entry.service';
 import { MatchStatus } from '../../generated/prisma/enums';
 import { MatchHistoryService } from '../../match-history/match-history.service';
@@ -7,7 +13,12 @@ import { RedisService } from '../../redis/redis.service';
 import { SettlementService } from '../../settlement/settlement.service';
 import { PerKeyQueue } from '../match-persistence.queue';
 import { RuntimeStore } from '../runtime-store';
-import { TurnGameCommand, TurnGameDefinition, TurnGameEvent, TurnGameState } from './turn-game.definition';
+import {
+  TurnGameCommand,
+  TurnGameDefinition,
+  TurnGameEvent,
+  TurnGameState,
+} from './turn-game.definition';
 
 export type TurnGameExecution<S, E> = {
   commandId: string;
@@ -17,7 +28,10 @@ export type TurnGameExecution<S, E> = {
   events: E[];
 };
 
-export type TurnGameParticipantView = { userId: string; fullName: string; seat: number } & Record<string, unknown>;
+export type TurnGameParticipantView = { userId: string; fullName: string; seat: number } & Record<
+  string,
+  unknown
+>;
 
 const SLOW_COMMAND_MS = 100;
 /** How long a player's command waits for the match lock before RESOURCE_BUSY. */
@@ -34,9 +48,11 @@ export type TurnGameExecuteOptions = {
  * are told at once; PostgreSQL (history, status, settlement) follows in order
  * per match, off the hot path, with a retry set for failures.
  */
-export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand, E extends TurnGameEvent>
-  implements OnApplicationShutdown
-{
+export class TurnGameRuntime<
+  S extends TurnGameState,
+  C extends TurnGameCommand,
+  E extends TurnGameEvent,
+> implements OnApplicationShutdown {
   protected readonly logger: Logger;
   private readonly executedListeners = new Set<(state: S) => void>();
   private readonly persistence = new PerKeyQueue();
@@ -89,7 +105,10 @@ export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand,
     }));
   }
 
-  async execute(command: C & { matchId: string }, options: TurnGameExecuteOptions = {}): Promise<TurnGameExecution<S, E>> {
+  async execute(
+    command: C & { matchId: string },
+    options: TurnGameExecuteOptions = {},
+  ): Promise<TurnGameExecution<S, E>> {
     const { matchId, ...runtimeCommand } = command;
     const startedAt = Date.now();
     let lockWaitMs = 0;
@@ -103,7 +122,13 @@ export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand,
         if (previous) {
           if (previous.fingerprint !== fingerprint) throw new Error('COMMAND_ID_REUSE');
           const current = await this.ensureSnapshot(matchId);
-          return { commandId: command.commandId, version: current.game.version, duplicate: true, state: current, events: [] };
+          return {
+            commandId: command.commandId,
+            version: current.game.version,
+            duplicate: true,
+            state: current,
+            events: [],
+          };
         }
 
         const state = await this.ensureSnapshot(matchId);
@@ -133,10 +158,14 @@ export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand,
         try {
           listener(execution.state);
         } catch (error) {
-          this.logger.warn(`executed_listener_failed match=${matchId} reason=${(error as Error).message}`);
+          this.logger.warn(
+            `executed_listener_failed match=${matchId} reason=${(error as Error).message}`,
+          );
         }
       }
-      void this.persistence.enqueue(matchId, () => this.persistAfterCommit(matchId, command.commandId, execution));
+      void this.persistence.enqueue(matchId, () =>
+        this.persistAfterCommit(matchId, command.commandId, execution),
+      );
     }
     const elapsed = Date.now() - startedAt;
     if (elapsed > SLOW_COMMAND_MS) {
@@ -167,7 +196,9 @@ export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand,
         }
         await this.redis.raw().sRem(this.store.postCommitRetryKey(), matchId);
       } catch (error) {
-        this.logger.warn(`${this.definition.key}_post_commit_retry_failed match=${matchId} reason=${(error as Error).message}`);
+        this.logger.warn(
+          `${this.definition.key}_post_commit_retry_failed match=${matchId} reason=${(error as Error).message}`,
+        );
       }
     }
   }
@@ -177,13 +208,27 @@ export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand,
     return this.definition.isPreGame?.(state) ?? state.game.version === 0;
   }
 
-  private async persistAfterCommit(matchId: string, commandId: string, execution: TurnGameExecution<S, E>): Promise<void> {
+  private async persistAfterCommit(
+    matchId: string,
+    commandId: string,
+    execution: TurnGameExecution<S, E>,
+  ): Promise<void> {
     try {
-      await this.history.persistExecution({ matchId, commandId, state: execution.state, events: execution.events });
+      await this.history.persistExecution({
+        matchId,
+        commandId,
+        state: execution.state,
+        events: execution.events,
+      });
       await this.syncMatchStatus(execution.state);
     } catch (error) {
-      this.logger.error(`${this.definition.key}_post_commit_failed match=${matchId} command=${commandId} reason=${(error as Error).message}`);
-      await this.redis.raw().sAdd(this.store.postCommitRetryKey(), matchId).catch(() => undefined);
+      this.logger.error(
+        `${this.definition.key}_post_commit_failed match=${matchId} command=${commandId} reason=${(error as Error).message}`,
+      );
+      await this.redis
+        .raw()
+        .sAdd(this.store.postCommitRetryKey(), matchId)
+        .catch(() => undefined);
     }
   }
 
@@ -199,14 +244,25 @@ export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand,
       where: { id: matchId },
       include: { game: true, participants: { orderBy: { seat: 'asc' } } },
     });
-    if (!match) throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
+    if (!match)
+      throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
     if (match.game.code !== this.definition.code) {
-      throw new NotFoundException({ code: 'WRONG_GAME', message: `This is not a ${this.definition.code} match.` });
+      throw new NotFoundException({
+        code: 'WRONG_GAME',
+        message: `This is not a ${this.definition.code} match.`,
+      });
     }
     if (([MatchStatus.CANCELLED, MatchStatus.ABORTED] as MatchStatus[]).includes(match.status)) {
-      throw new ServiceUnavailableException({ code: 'MATCH_NOT_ACTIVE', message: 'This match is no longer active.' });
+      throw new ServiceUnavailableException({
+        code: 'MATCH_NOT_ACTIVE',
+        message: 'This match is no longer active.',
+      });
     }
-    if (([MatchStatus.PLAYING, MatchStatus.FINISHING, MatchStatus.FINISHED] as MatchStatus[]).includes(match.status)) {
+    if (
+      (
+        [MatchStatus.PLAYING, MatchStatus.FINISHING, MatchStatus.FINISHED] as MatchStatus[]
+      ).includes(match.status)
+    ) {
       const durable = await this.history.getCheckpoint<S>(matchId);
       if (!durable) {
         throw new ServiceUnavailableException({
@@ -233,7 +289,9 @@ export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand,
         message: `This game needs ${min === max ? min : `${min} to ${max}`} players.`,
       });
     }
-    const initial = this.definition.create(match.id, ids, match.rulesVersion, { tokensToWin: match.tokensToWin });
+    const initial = this.definition.create(match.id, ids, match.rulesVersion, {
+      tokensToWin: match.tokensToWin,
+    });
     // Players joining at once all reach here; one snapshot wins, and only its
     // creator (who gets its own object back) writes the first checkpoint.
     const state = await this.store.saveSnapshotIfAbsent(matchId, initial);
@@ -243,7 +301,10 @@ export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand,
 
   private assertPlayer(state: S, userId: string): void {
     if (!state.game.players.some((player) => player.userId === userId)) {
-      throw new ForbiddenException({ code: 'MATCH_ACCESS_DENIED', message: 'You are not part of this match.' });
+      throw new ForbiddenException({
+        code: 'MATCH_ACCESS_DENIED',
+        message: 'You are not part of this match.',
+      });
     }
   }
 
@@ -253,9 +314,16 @@ export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand,
       select: { id: true },
     });
     if (participant) return;
-    const exists = await this.prisma.match.findUnique({ where: { id: matchId }, select: { id: true } });
-    if (!exists) throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
-    throw new ForbiddenException({ code: 'MATCH_ACCESS_DENIED', message: 'You are not part of this match.' });
+    const exists = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      select: { id: true },
+    });
+    if (!exists)
+      throw new NotFoundException({ code: 'MATCH_NOT_FOUND', message: 'Match not found.' });
+    throw new ForbiddenException({
+      code: 'MATCH_ACCESS_DENIED',
+      message: 'You are not part of this match.',
+    });
   }
 
   /** Durable status from the authoritative state. Idempotent (live path and retries). */
@@ -273,7 +341,12 @@ export class TurnGameRuntime<S extends TurnGameState, C extends TurnGameCommand,
     const draw = game.result === 'DRAW';
     await this.prisma.match.updateMany({
       where: { id: game.matchId, status: { in: [MatchStatus.READY, MatchStatus.PLAYING] } },
-      data: { status: MatchStatus.FINISHING, winnerOrder: game.winnerOrder, resultVersion: game.version, isDraw: draw },
+      data: {
+        status: MatchStatus.FINISHING,
+        winnerOrder: game.winnerOrder,
+        resultVersion: game.version,
+        isDraw: draw,
+      },
     });
     try {
       if (draw) await this.settlement.settleDraw(game.matchId);

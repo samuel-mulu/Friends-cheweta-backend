@@ -1,4 +1,13 @@
-import { BadRequestException, Body, Controller, Get, Param, Patch, Query, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -53,7 +62,10 @@ export class AdminOpsController {
     @Body() body: { status: 'REVIEWED' | 'DISMISSED' },
   ) {
     if (!['REVIEWED', 'DISMISSED'].includes(body.status)) {
-      throw new BadRequestException({ code: 'INVALID_RISK_STATUS', message: 'Risk status must be REVIEWED or DISMISSED.' });
+      throw new BadRequestException({
+        code: 'INVALID_RISK_STATUS',
+        message: 'Risk status must be REVIEWED or DISMISSED.',
+      });
     }
     const flag = await this.risk.review(id, user.id, body.status);
     await this.audit.write({

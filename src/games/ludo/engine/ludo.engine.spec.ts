@@ -19,7 +19,9 @@ describe('LudoEngine B7', () => {
     expect(engine.getLegalMoves(state, 'red-user', 5)).toHaveLength(0);
     const moves = engine.getLegalMoves(state, 'red-user', 6);
     expect(moves).toHaveLength(4);
-    expect(moves.every((move) => move.kind === LudoMoveKind.DEPLOY && move.toProgress === 0)).toBe(true);
+    expect(moves.every((move) => move.kind === LudoMoveKind.DEPLOY && move.toProgress === 0)).toBe(
+      true,
+    );
     expect(moves[0].path).toEqual([-1, 0]);
   });
 
@@ -58,7 +60,9 @@ describe('LudoEngine B7', () => {
     state.players[1].tokens[0].state = LudoTokenState.ACTIVE;
     state.players[1].tokens[0].progress = 34; // yellow -> global 8 safe
 
-    const move = engine.getLegalMoves(state, 'red-user', 2).find((item) => item.tokenId === 'RED-1');
+    const move = engine
+      .getLegalMoves(state, 'red-user', 2)
+      .find((item) => item.tokenId === 'RED-1');
     expect(move?.destinationGlobalSquare).toBe(8);
     expect(move?.capturedTokenIds).toEqual([]);
 
@@ -76,7 +80,9 @@ describe('LudoEngine B7', () => {
       token.progress = 32; // yellow global 6
     }
 
-    const red1 = engine.getLegalMoves(state, 'red-user', 4).find((move) => move.tokenId === 'RED-1');
+    const red1 = engine
+      .getLegalMoves(state, 'red-user', 4)
+      .find((move) => move.tokenId === 'RED-1');
     expect(red1).toBeUndefined();
   });
 
@@ -146,19 +152,22 @@ describe('LudoEngine B7', () => {
     expect(next.players[0].tokens[0].state).toBe(LudoTokenState.HOME_PATH);
   });
 
-  it.each(['LUDO_CLASSIC_V2', 'LUDO_CLASSIC_V3'] as const)('%s: requires an exact roll to finish', (version) => {
-    const board = boardFor(version);
-    const state = state2(version);
-    state.players[0].tokens[0].state = LudoTokenState.HOME_PATH;
-    state.players[0].tokens[0].progress = board.finish - 2;
+  it.each(['LUDO_CLASSIC_V2', 'LUDO_CLASSIC_V3'] as const)(
+    '%s: requires an exact roll to finish',
+    (version) => {
+      const board = boardFor(version);
+      const state = state2(version);
+      state.players[0].tokens[0].state = LudoTokenState.HOME_PATH;
+      state.players[0].tokens[0].progress = board.finish - 2;
 
-    expect(engine.getLegalTokenIds(state, 'red-user', 3)).not.toContain('RED-1');
-    expect(engine.getLegalTokenIds(state, 'red-user', 2)).toContain('RED-1');
+      expect(engine.getLegalTokenIds(state, 'red-user', 3)).not.toContain('RED-1');
+      expect(engine.getLegalTokenIds(state, 'red-user', 2)).toContain('RED-1');
 
-    const { state: next } = engine.move(state, 'red-user', 'RED-1', 2);
-    expect(next.players[0].tokens[0].progress).toBe(board.finish);
-    expect(next.players[0].tokens[0].state).toBe(LudoTokenState.FINISHED);
-  });
+      const { state: next } = engine.move(state, 'red-user', 'RED-1', 2);
+      expect(next.players[0].tokens[0].progress).toBe(board.finish);
+      expect(next.players[0].tokens[0].state).toBe(LudoTokenState.FINISHED);
+    },
+  );
 
   it('never moves a finished token', () => {
     const state = state2();

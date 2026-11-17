@@ -75,7 +75,16 @@ export class PracticeService {
 
         const committed = await this.prisma.matchParticipant.findFirst({
           where: { userId, match: { status: { in: COMMITTED_MATCH_STATUSES } } },
-          select: { match: { select: { id: true, sessionCode: true, source: true, game: { select: { code: true } } } } },
+          select: {
+            match: {
+              select: {
+                id: true,
+                sessionCode: true,
+                source: true,
+                game: { select: { code: true } },
+              },
+            },
+          },
         });
         if (committed) {
           // Already in a practice game: go back to it instead of failing.
@@ -122,7 +131,9 @@ export class PracticeService {
           resumed: false,
         };
         await this.redis.setJson(commandKey, result, COMMAND_TTL_SECONDS);
-        this.logger.log(`practice_started user=${userId} game=${game} level=${level} match=${match.id}`);
+        this.logger.log(
+          `practice_started user=${userId} game=${game} level=${level} match=${match.id}`,
+        );
         return result;
       },
       undefined,

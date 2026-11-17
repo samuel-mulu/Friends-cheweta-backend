@@ -1,7 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { GameEntryService } from '../../game-entry/game-entry.service';
 import { DamaMove } from '../../games/dama/domain';
-import { DamaMatchRuntimeState, DamaRuntimeCommand, DamaRuntimeEvent, currentLegalMoves } from '../../games/dama/runtime';
+import {
+  DamaMatchRuntimeState,
+  DamaRuntimeCommand,
+  DamaRuntimeEvent,
+  currentLegalMoves,
+} from '../../games/dama/runtime';
 import { MatchHistoryService } from '../../match-history/match-history.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
@@ -16,7 +21,11 @@ export type DamaExecution = TurnGameExecution<DamaMatchRuntimeState, DamaRuntime
 
 /** Authoritative Dama matches (shared turn-game runtime). */
 @Injectable()
-export class DamaRuntimeService extends TurnGameRuntime<DamaMatchRuntimeState, DamaRuntimeCommand, DamaRuntimeEvent> {
+export class DamaRuntimeService extends TurnGameRuntime<
+  DamaMatchRuntimeState,
+  DamaRuntimeCommand,
+  DamaRuntimeEvent
+> {
   constructor(
     prisma: PrismaService,
     redis: RedisService,

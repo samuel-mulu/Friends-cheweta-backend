@@ -19,7 +19,8 @@ export class BotRandom {
   }
 
   nextInt(maxExclusive: number): number {
-    if (!Number.isInteger(maxExclusive) || maxExclusive <= 0) throw new RangeError('maxExclusive must be positive.');
+    if (!Number.isInteger(maxExclusive) || maxExclusive <= 0)
+      throw new RangeError('maxExclusive must be positive.');
     let x = this.state;
     x ^= x << 13;
     x ^= x >>> 17;

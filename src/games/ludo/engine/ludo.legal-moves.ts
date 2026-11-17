@@ -59,8 +59,8 @@ function isBlockedByOpponent(
 ): boolean {
   const blockadeSquares = getOpponentBlockadeSquares(state, token.ownerId);
   if (blockadeSquares.size === 0) return false;
-  return getTraversedCommonTrackSquares(board, token.color, fromProgress, toProgress).some((square) =>
-    blockadeSquares.has(square),
+  return getTraversedCommonTrackSquares(board, token.color, fromProgress, toProgress).some(
+    (square) => blockadeSquares.has(square),
   );
 }
 
@@ -109,7 +109,8 @@ function buildTrackMove(
   if (
     destinationGlobalSquare !== null &&
     wouldCreateBlockadeWithOpponent(state, token.ownerId, destinationGlobalSquare)
-  ) return null;
+  )
+    return null;
 
   return {
     tokenId: token.id,

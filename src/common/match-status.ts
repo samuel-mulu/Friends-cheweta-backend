@@ -20,10 +20,7 @@ export const COMMITTED_MATCH_STATUSES: MatchStatus[] = [
 ];
 
 /** Pre-game statuses eligible for orphan maintenance cancellation. */
-export const PREMATCH_ORPHAN_STATUSES: MatchStatus[] = [
-  MatchStatus.CREATED,
-  MatchStatus.WAITING,
-];
+export const PREMATCH_ORPHAN_STATUSES: MatchStatus[] = [MatchStatus.CREATED, MatchStatus.WAITING];
 
 export function isRecoverableMatchStatus(status: MatchStatus): boolean {
   return RECOVERABLE_MATCH_STATUSES.includes(status);

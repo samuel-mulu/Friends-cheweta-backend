@@ -42,7 +42,10 @@ async function createHarness() {
     saveCheckpoint: jest.fn(async () => undefined),
     getCheckpoint: jest.fn(async () => null),
   };
-  const settlement = { settleMatchResult: jest.fn(async () => undefined), settleDraw: jest.fn(async () => undefined) };
+  const settlement = {
+    settleMatchResult: jest.fn(async () => undefined),
+    settleDraw: jest.fn(async () => undefined),
+  };
   const config = { get: (key: string) => (key.startsWith('REDIS_') ? 3600 : undefined) };
   const repository = new LudoRuntimeRepository(redis, config as any);
   const service = new LudoRuntimeService(
@@ -64,7 +67,9 @@ async function createHarness() {
     cleanup,
     slowDb: (ms: number) => (dbDelayMs = ms),
     /** Database reads so far (match + participant lookups). */
-    calls: () => prisma.match.findUnique.mock.calls.length + prisma.matchParticipant.findUnique.mock.calls.length,
+    calls: () =>
+      prisma.match.findUnique.mock.calls.length +
+      prisma.matchParticipant.findUnique.mock.calls.length,
   };
 }
 
@@ -206,11 +211,19 @@ describe('LudoRuntimeService on the shared turn-game runtime (real Redis)', () =
     if (playing.game.phase !== 'PLAYING') return; // tie
     const loser = playing.game.currentPlayerId!;
     const winner = loser === 'A' ? 'B' : 'A';
-    await h.service.execute({ matchId: MATCH, type: 'RESIGN', playerId: loser, commandId: 'resign', expectedVersion: playing.game.version });
+    await h.service.execute({
+      matchId: MATCH,
+      type: 'RESIGN',
+      playerId: loser,
+      commandId: 'resign',
+      expectedVersion: playing.game.version,
+    });
     await h.service.flushPersistence(MATCH);
     expect(h.settlement.settleMatchResult).toHaveBeenCalledWith(MATCH, [winner, loser]);
     expect(h.prisma.match.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: MatchStatus.FINISHING, isDraw: false }) }),
+      expect.objectContaining({
+        data: expect.objectContaining({ status: MatchStatus.FINISHING, isDraw: false }),
+      }),
     );
   });
 });

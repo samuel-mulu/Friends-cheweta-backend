@@ -214,7 +214,11 @@ export class ChallengeService {
       });
     }
     // Practice games restart from Practice ("Play again"), not as a rematch.
-    if (match.status !== MatchStatus.FINISHED || playerIds.length !== 2 || match.source === 'PRACTICE') {
+    if (
+      match.status !== MatchStatus.FINISHED ||
+      playerIds.length !== 2 ||
+      match.source === 'PRACTICE'
+    ) {
       throw new ConflictException({
         code: 'REMATCH_NOT_AVAILABLE',
         message: 'Only a finished match can be rematched.',

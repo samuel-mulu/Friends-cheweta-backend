@@ -1,10 +1,4 @@
-import {
-  ArgumentsHost,
-  Catch,
-  ExceptionFilter,
-  HttpException,
-  HttpStatus,
-} from '@nestjs/common';
+import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus } from '@nestjs/common';
 import { Request, Response } from 'express';
 
 @Catch()
@@ -14,10 +8,12 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request & { requestId?: string }>();
 
-    const status = exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
+    const status =
+      exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
     const raw = exception instanceof HttpException ? exception.getResponse() : null;
 
-    let code = status === 500 ? 'INTERNAL_SERVER_ERROR' : status === 429 ? 'RATE_LIMITED' : 'REQUEST_FAILED';
+    let code =
+      status === 500 ? 'INTERNAL_SERVER_ERROR' : status === 429 ? 'RATE_LIMITED' : 'REQUEST_FAILED';
     let message: string | string[] = status === 500 ? 'Internal server error' : 'Request failed';
     let details: unknown;
 
@@ -26,7 +22,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
     } else if (raw && typeof raw === 'object') {
       const body = raw as Record<string, unknown>;
       if (typeof body.code === 'string') code = body.code;
-      if (typeof body.message === 'string' || Array.isArray(body.message)) message = body.message as string | string[];
+      if (typeof body.message === 'string' || Array.isArray(body.message))
+        message = body.message as string | string[];
       if ('details' in body) details = body.details;
     }
 

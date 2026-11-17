@@ -65,7 +65,9 @@ export async function withFinancialTiming<T>(
   } catch (error) {
     const durationMs = Date.now() - startedAt;
     const reason = safeErrorReason(error);
-    logger.warn(`operation=${operation} ${formatContext(context)} durationMs=${durationMs} status=failure reason=${reason}`);
+    logger.warn(
+      `operation=${operation} ${formatContext(context)} durationMs=${durationMs} status=failure reason=${reason}`,
+    );
     throw error;
   }
 }

@@ -1,7 +1,11 @@
 import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { MatchStatus, UserRole } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
-import { computeDamaPlayerStats, computePlayerMatchStats, summarizePlayerStats } from './stats.compute';
+import {
+  computeDamaPlayerStats,
+  computePlayerMatchStats,
+  summarizePlayerStats,
+} from './stats.compute';
 
 export type LeaderboardPeriod = 'week' | 'all';
 const LEADERBOARD_SIZE = 50;
@@ -31,7 +35,10 @@ export class StatsService {
 
     const dama = match.game?.code === 'DAMA';
     const events = await this.prisma.matchEvent.findMany({
-      where: { matchId, type: { in: dama ? ['PIECE_MOVED'] : ['DICE_ROLLED', 'TOKEN_CAPTURED', 'TOKEN_FINISHED'] } },
+      where: {
+        matchId,
+        type: { in: dama ? ['PIECE_MOVED'] : ['DICE_ROLLED', 'TOKEN_CAPTURED', 'TOKEN_FINISHED'] },
+      },
       select: { type: true, payload: true },
       orderBy: { sequence: 'asc' },
     });

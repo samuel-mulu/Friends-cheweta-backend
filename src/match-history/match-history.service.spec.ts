@@ -7,7 +7,10 @@ describe('MatchHistoryService.pruneEvents', () => {
   function harness(batches: string[][]) {
     const findMany = jest.fn(async (_args: any) => (batches.shift() ?? []).map((id) => ({ id })));
     const deleteMany = jest.fn(async ({ where }: any) => ({ count: where.matchId.in.length * 5 }));
-    const service = new MatchHistoryService({ match: { findMany }, matchEvent: { deleteMany } } as any);
+    const service = new MatchHistoryService({
+      match: { findMany },
+      matchEvent: { deleteMany },
+    } as any);
     return { service, findMany, deleteMany };
   }
 
@@ -42,7 +45,9 @@ describe('MatchHistoryService.pruneEvents', () => {
   it('works through a backlog in bounded batches', async () => {
     const full = (n: number) => Array.from({ length: 200 }, (_, i) => `m-${n}-${i}`);
     // More full batches are waiting than one run takes: 10 per rule, the rest next hour.
-    const { service, findMany, deleteMany } = harness(Array.from({ length: 25 }, (_, n) => full(n)));
+    const { service, findMany, deleteMany } = harness(
+      Array.from({ length: 25 }, (_, n) => full(n)),
+    );
     await service.pruneEvents();
     expect(findMany).toHaveBeenCalledTimes(20);
     expect(deleteMany).toHaveBeenCalledTimes(20);

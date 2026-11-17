@@ -1,4 +1,14 @@
-import { DamaBoard, DamaColor, DamaGameState, DamaMove, colorOf, isKing, opponentOf, rowOf, colOf } from '../domain';
+import {
+  DamaBoard,
+  DamaColor,
+  DamaGameState,
+  DamaMove,
+  colorOf,
+  isKing,
+  opponentOf,
+  rowOf,
+  colOf,
+} from '../domain';
 import { applyMove, legalMoves } from '../engine';
 
 export interface DamaBot {
@@ -84,13 +94,25 @@ export class MinimaxDamaBot implements DamaBot {
     return choices[Math.floor(this.random() * choices.length)];
   }
 
-  private search(board: DamaBoard, color: DamaColor, depth: number, alpha: number, beta: number): number {
+  private search(
+    board: DamaBoard,
+    color: DamaColor,
+    depth: number,
+    alpha: number,
+    beta: number,
+  ): number {
     const moves = legalMoves(board, color);
     if (moves.length === 0) return -WIN - depth; // blocked or no pieces: lost (prefer faster wins)
     if (depth <= 0) return evaluateBoard(board, color);
     let best = -Infinity;
     for (const move of moves) {
-      const score = -this.search(applyMove(board, move).board, opponentOf(color), depth - 1, -beta, -alpha);
+      const score = -this.search(
+        applyMove(board, move).board,
+        opponentOf(color),
+        depth - 1,
+        -beta,
+        -alpha,
+      );
       if (score > best) best = score;
       if (best > alpha) alpha = best;
       if (alpha >= beta) break;

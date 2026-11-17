@@ -19,10 +19,17 @@ export type TurnGameState = {
 
 export type TurnGameEvent = { type: string; matchId: string; version: number };
 
-export type TurnGameCommand = { type: string; commandId: string; playerId: string; expectedVersion: number };
+export type TurnGameCommand = {
+  type: string;
+  commandId: string;
+  playerId: string;
+  expectedVersion: number;
+};
 
 /** A command without its envelope (id, player, version), e.g. `{ type: 'FLIP' }`. */
-export type CommandBody<C> = C extends unknown ? Omit<C, 'commandId' | 'playerId' | 'expectedVersion'> : never;
+export type CommandBody<C> = C extends unknown
+  ? Omit<C, 'commandId' | 'playerId' | 'expectedVersion'>
+  : never;
 
 /** Per-match options chosen at creation (from the `Match` row). */
 export type TurnGameCreateOptions = {
@@ -30,7 +37,11 @@ export type TurnGameCreateOptions = {
   tokensToWin?: number;
 };
 
-export interface TurnGameDefinition<S extends TurnGameState, C extends TurnGameCommand, E extends TurnGameEvent> {
+export interface TurnGameDefinition<
+  S extends TurnGameState,
+  C extends TurnGameCommand,
+  E extends TurnGameEvent,
+> {
   /** Backend game code (`Game.code`), e.g. `DAMA`. */
   readonly code: string;
   /** Redis namespace and socket event prefix, e.g. `dama`. */
@@ -44,7 +55,12 @@ export interface TurnGameDefinition<S extends TurnGameState, C extends TurnGameC
 
   isRulesVersion(value: string): boolean;
   /** A new match for these players (seat order); may use randomness. */
-  create(matchId: string, playerIds: string[], rulesVersion: string, options: TurnGameCreateOptions): S;
+  create(
+    matchId: string,
+    playerIds: string[],
+    rulesVersion: string,
+    options: TurnGameCreateOptions,
+  ): S;
   /** Validate and apply; throws `Error('CODE')` when the command is not allowed. */
   execute(state: S, command: C): { state: S; events: E[] };
   isFinished(state: S): boolean;

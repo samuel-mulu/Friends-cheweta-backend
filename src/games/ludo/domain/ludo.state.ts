@@ -15,7 +15,11 @@ export function tokensToWinOf(state: Pick<LudoGameState, 'tokensToWin'>): number
 }
 
 export function isValidTokensToWin(value: unknown): value is number {
-  return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= LUDO_CLASSIC_V1.tokensPerPlayer;
+  return (
+    Number.isInteger(value) &&
+    (value as number) >= 1 &&
+    (value as number) <= LUDO_CLASSIC_V1.tokensPerPlayer
+  );
 }
 
 export type LudoMatchOptions = {

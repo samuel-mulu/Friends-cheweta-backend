@@ -11,7 +11,8 @@ const factories: Factory[] = [
 ];
 
 const count = Number.parseInt(process.argv[2] ?? '1000', 10);
-if (!Number.isInteger(count) || count <= 0) throw new Error('Game count must be a positive integer.');
+if (!Number.isInteger(count) || count <= 0)
+  throw new Error('Game count must be a positive integer.');
 
 let totalCommands = 0;
 const byPlayerCount: Record<number, number> = {};
@@ -42,10 +43,16 @@ for (let index = 0; index < count; index += 1) {
   totalCommands += result.commandsExecuted;
 }
 
-console.log(JSON.stringify({
-  games: count,
-  byPlayerCount,
-  replayed: Math.min(50, count),
-  averageCommands: Math.round(totalCommands / count),
-  status: 'passed',
-}, null, 2));
+console.log(
+  JSON.stringify(
+    {
+      games: count,
+      byPlayerCount,
+      replayed: Math.min(50, count),
+      averageCommands: Math.round(totalCommands / count),
+      status: 'passed',
+    },
+    null,
+    2,
+  ),
+);

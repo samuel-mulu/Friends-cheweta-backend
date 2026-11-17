@@ -2,7 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppEnv } from '../../config/env';
 import { GameEntryService } from '../../game-entry/game-entry.service';
-import { LudoMatchRuntimeState, LudoRuntimeCommand, LudoRuntimeEvent } from '../../games/ludo/runtime';
+import {
+  LudoMatchRuntimeState,
+  LudoRuntimeCommand,
+  LudoRuntimeEvent,
+} from '../../games/ludo/runtime';
 import { MatchHistoryService } from '../../match-history/match-history.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
@@ -31,7 +35,11 @@ export class LudoRuntimeRepository extends RuntimeStore<LudoMatchRuntimeState, L
 
 /** Authoritative Ludo matches (shared turn-game runtime). */
 @Injectable()
-export class LudoRuntimeService extends TurnGameRuntime<LudoMatchRuntimeState, LudoRuntimeCommand, LudoRuntimeEvent> {
+export class LudoRuntimeService extends TurnGameRuntime<
+  LudoMatchRuntimeState,
+  LudoRuntimeCommand,
+  LudoRuntimeEvent
+> {
   constructor(
     prisma: PrismaService,
     redis: RedisService,
@@ -46,7 +54,11 @@ export class LudoRuntimeService extends TurnGameRuntime<LudoMatchRuntimeState, L
 
 /** Ludo's per-turn clock: auto-roll / auto-move + strikes, forfeit at the limit. */
 @Injectable()
-export class LudoTurnTimerService extends TurnGameTimer<LudoMatchRuntimeState, LudoRuntimeCommand, LudoRuntimeEvent> {
+export class LudoTurnTimerService extends TurnGameTimer<
+  LudoMatchRuntimeState,
+  LudoRuntimeCommand,
+  LudoRuntimeEvent
+> {
   constructor(
     runtime: LudoRuntimeService,
     redis: RedisService,
@@ -55,6 +67,13 @@ export class LudoTurnTimerService extends TurnGameTimer<LudoMatchRuntimeState, L
     joins: MatchJoinTracker,
     config: ConfigService<AppEnv, true>,
   ) {
-    super(runtime, redis, prisma, publisher, joins, config.get('GAME_MAX_CONSECUTIVE_TIMEOUTS', { infer: true }));
+    super(
+      runtime,
+      redis,
+      prisma,
+      publisher,
+      joins,
+      config.get('GAME_MAX_CONSECUTIVE_TIMEOUTS', { infer: true }),
+    );
   }
 }

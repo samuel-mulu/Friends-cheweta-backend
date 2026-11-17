@@ -77,11 +77,15 @@ describe('Ludo board geometry', () => {
     const state = createInitialLudoState('match-1', ['user-a', 'user-b']);
     expect(state.players.map((player) => player.color)).toEqual([LudoColor.RED, LudoColor.YELLOW]);
     expect(state.players.every((player) => player.tokens.length === 4)).toBe(true);
-    expect(state.players.flatMap((player) => player.tokens).every((token) => token.state === LudoTokenState.BASE)).toBe(true);
+    expect(
+      state.players
+        .flatMap((player) => player.tokens)
+        .every((token) => token.state === LudoTokenState.BASE),
+    ).toBe(true);
     expect(() => assertValidLudoState(state)).not.toThrow();
   });
 
-  it('validates token ranges against the state\'s own rules version', () => {
+  it("validates token ranges against the state's own rules version", () => {
     const v3 = createInitialLudoState('m', ['a', 'b'], 'LUDO_CLASSIC_V3');
     v3.players[0].tokens[0].state = LudoTokenState.ACTIVE;
     v3.players[0].tokens[0].progress = 51; // home cell under V3, not track

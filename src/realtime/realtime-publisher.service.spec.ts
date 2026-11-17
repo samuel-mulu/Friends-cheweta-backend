@@ -1,4 +1,8 @@
-import { ADMIN_OPERATIONS_ROOM, LUDO_EVENT_NAMES, RealtimePublisherService } from './realtime-publisher.service';
+import {
+  ADMIN_OPERATIONS_ROOM,
+  LUDO_EVENT_NAMES,
+  RealtimePublisherService,
+} from './realtime-publisher.service';
 
 const LUDO = { key: 'ludo', eventNames: LUDO_EVENT_NAMES };
 
@@ -21,7 +25,9 @@ describe('RealtimePublisherService', () => {
       {
         commandId: 'c',
         duplicate: false,
-        events: [{ type: 'DICE_ROLLED', matchId: 'm1', version: 3, playerId: 'A', diceValue: 4 } as any],
+        events: [
+          { type: 'DICE_ROLLED', matchId: 'm1', version: 3, playerId: 'A', diceValue: 4 } as any,
+        ],
       },
       LUDO,
     );
@@ -59,7 +65,11 @@ describe('RealtimePublisherService', () => {
   it('uses the game prefix for an event type without a mapped name', () => {
     const { publisher, emitted } = createPublisher();
     publisher.publishTurnGame(
-      { commandId: 'c', duplicate: false, events: [{ type: 'SOMETHING_NEW', matchId: 'm1', version: 1 }] },
+      {
+        commandId: 'c',
+        duplicate: false,
+        events: [{ type: 'SOMETHING_NEW', matchId: 'm1', version: 1 }],
+      },
       { key: 'dama', eventNames: {} },
     );
     expect(emitted[0].event).toBe('dama:event');

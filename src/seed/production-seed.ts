@@ -20,7 +20,9 @@ async function main(): Promise<void> {
   const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
   try {
     const { bots } = await seedCatalog(prisma);
-    console.log(`Seeded ${bots} practice bots and the Ludo, Dama, and Karta catalog. No admin accounts were created.`);
+    console.log(
+      `Seeded ${bots} practice bots and the Ludo, Dama, and Karta catalog. No admin accounts were created.`,
+    );
   } finally {
     await prisma.$disconnect();
   }

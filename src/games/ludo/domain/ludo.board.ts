@@ -62,7 +62,11 @@ export function isFinishedProgress(board: LudoBoardSpec, progress: number): bool
   return progress === board.finish;
 }
 
-export function toGlobalTrackIndex(board: LudoBoardSpec, color: LudoColor, progress: number): number {
+export function toGlobalTrackIndex(
+  board: LudoBoardSpec,
+  color: LudoColor,
+  progress: number,
+): number {
   if (!isCommonTrackProgress(board, progress)) {
     throw new RangeError(`Progress ${progress} is not on the common track.`);
   }

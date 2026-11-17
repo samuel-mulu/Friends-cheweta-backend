@@ -54,10 +54,14 @@ async function main(): Promise<void> {
     const adminPhones = process.env.NODE_ENV === 'production' ? [] : await seedDevAdmins(prisma);
     const { bots } = await seedCatalog(prisma);
     if (adminPhones.length === 0) {
-      console.log(`Seeded ${bots} practice bots and the game catalog. Development admin accounts were not created.`);
+      console.log(
+        `Seeded ${bots} practice bots and the game catalog. Development admin accounts were not created.`,
+      );
       return;
     }
-    console.log(`Seeded admins ${adminPhones.join(', ')}, ${bots} practice bots, Ludo, Dama and Karta game catalog.`);
+    console.log(
+      `Seeded admins ${adminPhones.join(', ')}, ${bots} practice bots, Ludo, Dama and Karta game catalog.`,
+    );
   } finally {
     await prisma.$disconnect();
   }

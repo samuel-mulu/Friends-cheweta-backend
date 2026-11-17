@@ -1,4 +1,9 @@
-import { LudoMatchPhase, LudoTokenState, LudoTurnPhase, createInitialLudoState } from '../../games/ludo/domain';
+import {
+  LudoMatchPhase,
+  LudoTokenState,
+  LudoTurnPhase,
+  createInitialLudoState,
+} from '../../games/ludo/domain';
 import { LudoEngine } from '../../games/ludo/engine';
 import { chooseTimeoutMove } from './timeout-move-chooser';
 

@@ -14,7 +14,11 @@ import { TurnGameTimer } from './turn-game-timer';
  * Connection, auth, chat and reactions live in `gateways/`; the match
  * room is shared.
  */
-export abstract class TurnGameGateway<S extends TurnGameState, C extends TurnGameCommand, E extends TurnGameEvent> {
+export abstract class TurnGameGateway<
+  S extends TurnGameState,
+  C extends TurnGameCommand,
+  E extends TurnGameEvent,
+> {
   protected constructor(
     protected readonly runtime: TurnGameRuntime<S, C, E>,
     protected readonly timer: TurnGameTimer<S, C, E>,
@@ -43,17 +47,26 @@ export abstract class TurnGameGateway<S extends TurnGameState, C extends TurnGam
     try {
       const user = requireUser(socket);
       const state = await this.runtime.getSnapshot(dto.matchId, user.id);
-      return { ...(await this.snapshot(dto.matchId, state)), timing: await this.timer.getTiming(state) };
+      return {
+        ...(await this.snapshot(dto.matchId, state)),
+        timing: await this.timer.getTiming(state),
+      };
     } catch (error) {
       return toErrorAck(error);
     }
   }
 
-  protected async command(socket: AuthenticatedSocket, dto: LudoCommandDto, body: CommandBody<C>): Promise<Ack> {
+  protected async command(
+    socket: AuthenticatedSocket,
+    dto: LudoCommandDto,
+    body: CommandBody<C>,
+  ): Promise<Ack> {
     try {
       const user = requireUser(socket);
-      if (!socket.rooms.has(this.publisher.matchRoom(dto.matchId))) throw new Error('MATCH_ROOM_NOT_JOINED');
-      if (this.runtime.definition.requiresAllJoined?.(body)) await this.timer.assertAllJoined(dto.matchId);
+      if (!socket.rooms.has(this.publisher.matchRoom(dto.matchId)))
+        throw new Error('MATCH_ROOM_NOT_JOINED');
+      if (this.runtime.definition.requiresAllJoined?.(body))
+        await this.timer.assertAllJoined(dto.matchId);
       const result = await this.runtime.execute({
         ...body,
         matchId: dto.matchId,
@@ -63,7 +76,12 @@ export abstract class TurnGameGateway<S extends TurnGameState, C extends TurnGam
       } as unknown as C & { matchId: string });
       this.publisher.publishTurnGame(result, this.runtime.definition);
       if (!result.duplicate) await this.timer.afterCommand(result.state, user.id);
-      return { ok: true, commandId: dto.commandId, version: result.state.game.version, duplicate: result.duplicate };
+      return {
+        ok: true,
+        commandId: dto.commandId,
+        version: result.state.game.version,
+        duplicate: result.duplicate,
+      };
     } catch (error) {
       return toErrorAck(error);
     }

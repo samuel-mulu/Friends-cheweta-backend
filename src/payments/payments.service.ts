@@ -1,4 +1,10 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
 import { PaymentStatus, WalletTransactionType } from '../generated/prisma/enums';
 import { withFinancialTiming } from '../common/utils/financial-instrumentation.util';
@@ -22,7 +28,9 @@ export class PaymentsService {
 
   async createDeposit(userId: string, dto: CreateDepositDto) {
     const amountMinor = this.parseAmount(dto.amountMinor);
-    const existing = await this.prisma.deposit.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
+    const existing = await this.prisma.deposit.findUnique({
+      where: { idempotencyKey: dto.idempotencyKey },
+    });
     if (existing) return this.serializeDeposit(existing);
 
     const referenceInUse = await this.prisma.deposit.findUnique({
@@ -49,7 +57,9 @@ export class PaymentsService {
       return this.serializeDeposit(deposit);
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        const duplicate = await this.prisma.deposit.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
+        const duplicate = await this.prisma.deposit.findUnique({
+          where: { idempotencyKey: dto.idempotencyKey },
+        });
         if (duplicate) return this.serializeDeposit(duplicate);
         throw new ConflictException({
           code: 'DEPOSIT_REFERENCE_ALREADY_USED',
@@ -62,41 +72,49 @@ export class PaymentsService {
 
   async createWithdrawal(userId: string, dto: CreateWithdrawalDto) {
     const amountMinor = this.parseAmount(dto.amountMinor);
-    const existing = await this.prisma.withdrawal.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
+    const existing = await this.prisma.withdrawal.findUnique({
+      where: { idempotencyKey: dto.idempotencyKey },
+    });
     if (existing) return this.serializeWithdrawal(existing);
 
     try {
-      const withdrawal = await withFinancialTiming(this.logger, 'WITHDRAWAL_CREATE', { userId }, () =>
-        this.prisma.$transaction(async (tx) => {
-          const created = await tx.withdrawal.create({
-            data: {
+      const withdrawal = await withFinancialTiming(
+        this.logger,
+        'WITHDRAWAL_CREATE',
+        { userId },
+        () =>
+          this.prisma.$transaction(async (tx) => {
+            const created = await tx.withdrawal.create({
+              data: {
+                userId,
+                amountMinor,
+                channel: dto.channel,
+                destination: dto.destination.trim(),
+                idempotencyKey: dto.idempotencyKey.trim(),
+                note: dto.note?.trim() || null,
+              },
+            });
+
+            await this.walletService.lockFundsInTransaction(tx, {
               userId,
               amountMinor,
-              channel: dto.channel,
-              destination: dto.destination.trim(),
-              idempotencyKey: dto.idempotencyKey.trim(),
-              note: dto.note?.trim() || null,
-            },
-          });
+              type: WalletTransactionType.WITHDRAWAL_LOCK,
+              idempotencyKey: `withdrawal:lock:${created.id}`,
+              referenceType: 'WITHDRAWAL',
+              referenceId: created.id,
+              metadata: { action: 'LOCK_FOR_WITHDRAWAL' },
+            });
 
-          await this.walletService.lockFundsInTransaction(tx, {
-            userId,
-            amountMinor,
-            type: WalletTransactionType.WITHDRAWAL_LOCK,
-            idempotencyKey: `withdrawal:lock:${created.id}`,
-            referenceType: 'WITHDRAWAL',
-            referenceId: created.id,
-            metadata: { action: 'LOCK_FOR_WITHDRAWAL' },
-          });
-
-          return created;
-        }),
+            return created;
+          }),
       );
 
       return this.serializeWithdrawal(withdrawal);
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        const duplicate = await this.prisma.withdrawal.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
+        const duplicate = await this.prisma.withdrawal.findUnique({
+          where: { idempotencyKey: dto.idempotencyKey },
+        });
         if (duplicate) return this.serializeWithdrawal(duplicate);
       }
       throw error;
@@ -145,17 +163,27 @@ export class PaymentsService {
     const current = await this.getDeposit(id);
     if (current.status === PaymentStatus.APPROVED) return this.serializeDeposit(current);
     if (current.status !== PaymentStatus.PENDING) {
-      throw new ConflictException({ code: 'DEPOSIT_NOT_PENDING', message: 'Deposit is not pending.' });
+      throw new ConflictException({
+        code: 'DEPOSIT_NOT_PENDING',
+        message: 'Deposit is not pending.',
+      });
     }
 
     await withFinancialTiming(this.logger, 'DEPOSIT_APPROVAL', { depositId: id }, () =>
       this.prisma.$transaction(async (tx) => {
         const changed = await tx.deposit.updateMany({
           where: { id, status: PaymentStatus.PENDING },
-          data: { status: PaymentStatus.APPROVED, reviewedByUserId: adminUserId, reviewedAt: new Date() },
+          data: {
+            status: PaymentStatus.APPROVED,
+            reviewedByUserId: adminUserId,
+            reviewedAt: new Date(),
+          },
         });
         if (changed.count !== 1) {
-          throw new ConflictException({ code: 'DEPOSIT_ALREADY_REVIEWED', message: 'Deposit was already reviewed.' });
+          throw new ConflictException({
+            code: 'DEPOSIT_ALREADY_REVIEWED',
+            message: 'Deposit was already reviewed.',
+          });
         }
 
         await this.walletService.creditAvailableInTransaction(tx, {
@@ -170,7 +198,14 @@ export class PaymentsService {
     );
 
     const result = this.serializeDeposit(await this.getDeposit(id));
-    await this.paymentFollowUp(current.userId, adminUserId, 'DEPOSIT_APPROVED', id, 'Deposit approved', 'Your deposit was approved.');
+    await this.paymentFollowUp(
+      current.userId,
+      adminUserId,
+      'DEPOSIT_APPROVED',
+      id,
+      'Deposit approved',
+      'Your deposit was approved.',
+    );
     return result;
   }
 
@@ -178,7 +213,10 @@ export class PaymentsService {
     const current = await this.getDeposit(id);
     if (current.status === PaymentStatus.REJECTED) return this.serializeDeposit(current);
     if (current.status !== PaymentStatus.PENDING) {
-      throw new ConflictException({ code: 'DEPOSIT_NOT_PENDING', message: 'Deposit is not pending.' });
+      throw new ConflictException({
+        code: 'DEPOSIT_NOT_PENDING',
+        message: 'Deposit is not pending.',
+      });
     }
 
     const changed = await this.prisma.deposit.updateMany({
@@ -191,10 +229,20 @@ export class PaymentsService {
       },
     });
     if (changed.count !== 1) {
-      throw new ConflictException({ code: 'DEPOSIT_ALREADY_REVIEWED', message: 'Deposit was already reviewed.' });
+      throw new ConflictException({
+        code: 'DEPOSIT_ALREADY_REVIEWED',
+        message: 'Deposit was already reviewed.',
+      });
     }
     const result = this.serializeDeposit(await this.getDeposit(id));
-    await this.paymentFollowUp(current.userId, adminUserId, 'DEPOSIT_REJECTED', id, 'Deposit rejected', 'Your deposit was rejected.');
+    await this.paymentFollowUp(
+      current.userId,
+      adminUserId,
+      'DEPOSIT_REJECTED',
+      id,
+      'Deposit rejected',
+      'Your deposit was rejected.',
+    );
     return result;
   }
 
@@ -202,17 +250,27 @@ export class PaymentsService {
     const current = await this.getWithdrawal(id);
     if (current.status === PaymentStatus.APPROVED) return this.serializeWithdrawal(current);
     if (current.status !== PaymentStatus.PENDING) {
-      throw new ConflictException({ code: 'WITHDRAWAL_NOT_PENDING', message: 'Withdrawal is not pending.' });
+      throw new ConflictException({
+        code: 'WITHDRAWAL_NOT_PENDING',
+        message: 'Withdrawal is not pending.',
+      });
     }
 
     await withFinancialTiming(this.logger, 'WITHDRAWAL_APPROVAL', { withdrawalId: id }, () =>
       this.prisma.$transaction(async (tx) => {
         const changed = await tx.withdrawal.updateMany({
           where: { id, status: PaymentStatus.PENDING },
-          data: { status: PaymentStatus.APPROVED, reviewedByUserId: adminUserId, reviewedAt: new Date() },
+          data: {
+            status: PaymentStatus.APPROVED,
+            reviewedByUserId: adminUserId,
+            reviewedAt: new Date(),
+          },
         });
         if (changed.count !== 1) {
-          throw new ConflictException({ code: 'WITHDRAWAL_ALREADY_REVIEWED', message: 'Withdrawal was already reviewed.' });
+          throw new ConflictException({
+            code: 'WITHDRAWAL_ALREADY_REVIEWED',
+            message: 'Withdrawal was already reviewed.',
+          });
         }
 
         await this.walletService.debitLockedInTransaction(tx, {
@@ -228,7 +286,14 @@ export class PaymentsService {
     );
 
     const result = this.serializeWithdrawal(await this.getWithdrawal(id));
-    await this.paymentFollowUp(current.userId, adminUserId, 'WITHDRAWAL_APPROVED', id, 'Withdrawal approved', 'Your withdrawal was approved.');
+    await this.paymentFollowUp(
+      current.userId,
+      adminUserId,
+      'WITHDRAWAL_APPROVED',
+      id,
+      'Withdrawal approved',
+      'Your withdrawal was approved.',
+    );
     return result;
   }
 
@@ -236,7 +301,10 @@ export class PaymentsService {
     const current = await this.getWithdrawal(id);
     if (current.status === PaymentStatus.REJECTED) return this.serializeWithdrawal(current);
     if (current.status !== PaymentStatus.PENDING) {
-      throw new ConflictException({ code: 'WITHDRAWAL_NOT_PENDING', message: 'Withdrawal is not pending.' });
+      throw new ConflictException({
+        code: 'WITHDRAWAL_NOT_PENDING',
+        message: 'Withdrawal is not pending.',
+      });
     }
 
     await withFinancialTiming(this.logger, 'WITHDRAWAL_REJECTION', { withdrawalId: id }, () =>
@@ -251,7 +319,10 @@ export class PaymentsService {
           },
         });
         if (changed.count !== 1) {
-          throw new ConflictException({ code: 'WITHDRAWAL_ALREADY_REVIEWED', message: 'Withdrawal was already reviewed.' });
+          throw new ConflictException({
+            code: 'WITHDRAWAL_ALREADY_REVIEWED',
+            message: 'Withdrawal was already reviewed.',
+          });
         }
 
         await this.walletService.releaseFundsInTransaction(tx, {
@@ -267,11 +338,25 @@ export class PaymentsService {
     );
 
     const result = this.serializeWithdrawal(await this.getWithdrawal(id));
-    await this.paymentFollowUp(current.userId, adminUserId, 'WITHDRAWAL_REJECTED', id, 'Withdrawal rejected', 'Your withdrawal was rejected.');
+    await this.paymentFollowUp(
+      current.userId,
+      adminUserId,
+      'WITHDRAWAL_REJECTED',
+      id,
+      'Withdrawal rejected',
+      'Your withdrawal was rejected.',
+    );
     return result;
   }
 
-  private async paymentFollowUp(userId: string, adminUserId: string, action: string, entityId: string, title: string, message: string) {
+  private async paymentFollowUp(
+    userId: string,
+    adminUserId: string,
+    action: string,
+    entityId: string,
+    title: string,
+    message: string,
+  ) {
     try {
       await this.notifications.create({
         userId,
@@ -294,20 +379,28 @@ export class PaymentsService {
 
   private async getDeposit(id: string) {
     const row = await this.prisma.deposit.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException({ code: 'DEPOSIT_NOT_FOUND', message: 'Deposit not found.' });
+    if (!row)
+      throw new NotFoundException({ code: 'DEPOSIT_NOT_FOUND', message: 'Deposit not found.' });
     return row;
   }
 
   private async getWithdrawal(id: string) {
     const row = await this.prisma.withdrawal.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException({ code: 'WITHDRAWAL_NOT_FOUND', message: 'Withdrawal not found.' });
+    if (!row)
+      throw new NotFoundException({
+        code: 'WITHDRAWAL_NOT_FOUND',
+        message: 'Withdrawal not found.',
+      });
     return row;
   }
 
   private parseAmount(value: string): bigint {
     const amount = BigInt(value);
     if (amount <= 0n) {
-      throw new BadRequestException({ code: 'INVALID_AMOUNT', message: 'Amount must be greater than zero.' });
+      throw new BadRequestException({
+        code: 'INVALID_AMOUNT',
+        message: 'Amount must be greater than zero.',
+      });
     }
     return amount;
   }

@@ -18,7 +18,8 @@ export class LudoEngine {
       tokenId: move.tokenId,
       toProgress: move.toProgress,
       captures: [...move.capturedTokenIds],
-      safe: move.destinationGlobalSquare !== null && isSafeGlobalSquare(move.destinationGlobalSquare),
+      safe:
+        move.destinationGlobalSquare !== null && isSafeGlobalSquare(move.destinationGlobalSquare),
     }));
   }
 

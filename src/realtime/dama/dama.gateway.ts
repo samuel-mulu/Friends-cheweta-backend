@@ -1,7 +1,16 @@
 import { UseFilters, UsePipes, ValidationPipe } from '@nestjs/common';
-import { ConnectedSocket, MessageBody, SubscribeMessage, WebSocketGateway } from '@nestjs/websockets';
+import {
+  ConnectedSocket,
+  MessageBody,
+  SubscribeMessage,
+  WebSocketGateway,
+} from '@nestjs/websockets';
 import { ChatService } from '../../chat/chat.service';
-import { DamaMatchRuntimeState, DamaRuntimeCommand, DamaRuntimeEvent } from '../../games/dama/runtime';
+import {
+  DamaMatchRuntimeState,
+  DamaRuntimeCommand,
+  DamaRuntimeEvent,
+} from '../../games/dama/runtime';
 import { DamaBotDriverService } from '../../practice/dama-bot-driver.service';
 import { MatchJoinDto } from '../dto/ludo-command.dto';
 import { RealtimePublisherService } from '../realtime-publisher.service';
@@ -16,7 +25,11 @@ import { DamaTurnTimerService } from './dama-turn-timer.service';
 @WebSocketGateway({ namespace: '/game' })
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
 @UseFilters(new WsAckExceptionFilter())
-export class DamaGateway extends TurnGameGateway<DamaMatchRuntimeState, DamaRuntimeCommand, DamaRuntimeEvent> {
+export class DamaGateway extends TurnGameGateway<
+  DamaMatchRuntimeState,
+  DamaRuntimeCommand,
+  DamaRuntimeEvent
+> {
   constructor(
     runtime: DamaRuntimeService,
     timer: DamaTurnTimerService,

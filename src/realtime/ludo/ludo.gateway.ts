@@ -1,7 +1,16 @@
 import { UseFilters, UsePipes, ValidationPipe } from '@nestjs/common';
-import { ConnectedSocket, MessageBody, SubscribeMessage, WebSocketGateway } from '@nestjs/websockets';
+import {
+  ConnectedSocket,
+  MessageBody,
+  SubscribeMessage,
+  WebSocketGateway,
+} from '@nestjs/websockets';
 import { ChatService } from '../../chat/chat.service';
-import { LudoMatchRuntimeState, LudoRuntimeCommand, LudoRuntimeEvent } from '../../games/ludo/runtime';
+import {
+  LudoMatchRuntimeState,
+  LudoRuntimeCommand,
+  LudoRuntimeEvent,
+} from '../../games/ludo/runtime';
 import { BotDriverService } from '../../practice/bot-driver.service';
 import { LudoCommandDto, LudoMoveCommandDto, MatchJoinDto } from '../dto/ludo-command.dto';
 import { RealtimePublisherService } from '../realtime-publisher.service';
@@ -17,7 +26,11 @@ import { LudoRuntimeService, LudoTurnTimerService } from './ludo-runtime.service
 @WebSocketGateway({ namespace: '/game' })
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
 @UseFilters(new WsAckExceptionFilter())
-export class LudoGateway extends TurnGameGateway<LudoMatchRuntimeState, LudoRuntimeCommand, LudoRuntimeEvent> {
+export class LudoGateway extends TurnGameGateway<
+  LudoMatchRuntimeState,
+  LudoRuntimeCommand,
+  LudoRuntimeEvent
+> {
   constructor(
     runtime: LudoRuntimeService,
     timer: LudoTurnTimerService,

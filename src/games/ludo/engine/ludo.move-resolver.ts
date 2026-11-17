@@ -1,8 +1,4 @@
-import {
-  LUDO_BASE_PROGRESS,
-  assertValidLudoState,
-  isSafeGlobalSquare,
-} from '../domain';
+import { LUDO_BASE_PROGRESS, assertValidLudoState, isSafeGlobalSquare } from '../domain';
 import { LudoGameState, LudoTokenState } from '../domain';
 import { LudoMoveResolution } from './ludo.engine.types';
 import { getLegalMoves } from './ludo.legal-moves';
@@ -26,7 +22,9 @@ export function applyLudoMove(
   tokenId: string,
   diceValue: number,
 ): { state: LudoGameState; resolution: LudoMoveResolution } {
-  const legalMove = getLegalMoves(state, playerId, diceValue).find((move) => move.tokenId === tokenId);
+  const legalMove = getLegalMoves(state, playerId, diceValue).find(
+    (move) => move.tokenId === tokenId,
+  );
   if (!legalMove) throw new Error('ILLEGAL_LUDO_MOVE');
 
   const beforeToken = getTokenById(state, tokenId);

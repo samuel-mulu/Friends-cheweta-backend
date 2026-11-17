@@ -13,7 +13,8 @@ const factories: Array<{ name: string; make: BotFactory }> = [
 ];
 
 const count = Number.parseInt(process.argv[2] ?? '5000', 10);
-if (!Number.isInteger(count) || count <= 0) throw new Error('Game count must be a positive integer.');
+if (!Number.isInteger(count) || count <= 0)
+  throw new Error('Game count must be a positive integer.');
 const rulesVersion = process.argv[3] ?? 'LUDO_CLASSIC_V1';
 if (!isLudoRulesVersion(rulesVersion)) throw new Error(`Unknown rules version ${rulesVersion}`);
 
@@ -52,14 +53,23 @@ for (let index = 0; index < count; index += 1) {
   }
 }
 
-console.log(JSON.stringify({
-  games: count,
-  replayed,
-  rulesVersion,
-  averageCommands: Math.round(totalCommands / count),
-  wins,
-  // Fair comparison: share of the games each strategy played that it won.
-  winRate: Object.fromEntries(
-    Object.keys(played).map((name) => [name, Number(((wins[name] ?? 0) / played[name]).toFixed(3))]),
+console.log(
+  JSON.stringify(
+    {
+      games: count,
+      replayed,
+      rulesVersion,
+      averageCommands: Math.round(totalCommands / count),
+      wins,
+      // Fair comparison: share of the games each strategy played that it won.
+      winRate: Object.fromEntries(
+        Object.keys(played).map((name) => [
+          name,
+          Number(((wins[name] ?? 0) / played[name]).toFixed(3)),
+        ]),
+      ),
+    },
+    null,
+    2,
   ),
-}, null, 2));
+);

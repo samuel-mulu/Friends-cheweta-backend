@@ -14,9 +14,24 @@
  */
 export const KARTA_V1 = 'KARTA_LATLAT_V1' as const;
 export type KartaRulesVersion = typeof KARTA_V1;
-export const isKartaRulesVersion = (value: string): value is KartaRulesVersion => value === KARTA_V1;
+export const isKartaRulesVersion = (value: string): value is KartaRulesVersion =>
+  value === KARTA_V1;
 
-export const KARTA_RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'] as const;
+export const KARTA_RANKS = [
+  'A',
+  '2',
+  '3',
+  '4',
+  '5',
+  '6',
+  '7',
+  '8',
+  '9',
+  '10',
+  'J',
+  'Q',
+  'K',
+] as const;
 export const KARTA_SUITS = ['S', 'H', 'D', 'C'] as const;
 export type KartaRank = (typeof KARTA_RANKS)[number];
 export type KartaSuit = (typeof KARTA_SUITS)[number];

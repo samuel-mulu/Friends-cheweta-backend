@@ -58,6 +58,7 @@ export function validateEnv(config: Record<string, unknown>): AppEnv {
   }
   return {
     ...parsed.data,
-    TRUST_PROXY_HOPS: parsed.data.TRUST_PROXY_HOPS ?? (parsed.data.NODE_ENV === 'production' ? 1 : 0),
+    TRUST_PROXY_HOPS:
+      parsed.data.TRUST_PROXY_HOPS ?? (parsed.data.NODE_ENV === 'production' ? 1 : 0),
   };
 }

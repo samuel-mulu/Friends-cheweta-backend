@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  InternalServerErrorException,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, InternalServerErrorException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { compare, hash } from 'bcryptjs';
@@ -95,7 +91,8 @@ export class AuthService {
     if (!user || user.status !== UserStatus.ACTIVE) {
       throw new UnauthorizedException({
         code: user?.status === UserStatus.BLOCKED ? 'ACCOUNT_BLOCKED' : 'INVALID_REFRESH_TOKEN',
-        message: user?.status === UserStatus.BLOCKED ? 'Account is blocked.' : 'Refresh token is invalid.',
+        message:
+          user?.status === UserStatus.BLOCKED ? 'Account is blocked.' : 'Refresh token is invalid.',
       });
     }
 
@@ -142,7 +139,8 @@ export class AuthService {
     if (!user || user.status !== UserStatus.ACTIVE) {
       throw new UnauthorizedException({
         code: user?.status === UserStatus.BLOCKED ? 'ACCOUNT_BLOCKED' : 'INVALID_ACCESS_TOKEN',
-        message: user?.status === UserStatus.BLOCKED ? 'Account is blocked.' : 'Invalid access token.',
+        message:
+          user?.status === UserStatus.BLOCKED ? 'Account is blocked.' : 'Invalid access token.',
       });
     }
 

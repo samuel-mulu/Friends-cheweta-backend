@@ -57,7 +57,8 @@ class FakeWalletStore {
       walletTransaction: {
         findUnique: async ({ where }: any) => {
           store.count('walletTransaction.findUnique');
-          if (where.idempotencyKey) return store.ledgerByIdempotencyKey.get(where.idempotencyKey) ?? null;
+          if (where.idempotencyKey)
+            return store.ledgerByIdempotencyKey.get(where.idempotencyKey) ?? null;
           return null;
         },
         create: async ({ data }: any) => {
@@ -83,14 +84,22 @@ class FakeWalletStore {
           store.count('wallet.updateMany');
           const wallet = store.wallets.get(where.id);
           if (!wallet) return { count: 0 };
-          if (where.availableBalance?.gte !== undefined && wallet.availableBalance < where.availableBalance.gte) {
+          if (
+            where.availableBalance?.gte !== undefined &&
+            wallet.availableBalance < where.availableBalance.gte
+          ) {
             return { count: 0 };
           }
-          if (where.lockedBalance?.gte !== undefined && wallet.lockedBalance < where.lockedBalance.gte) {
+          if (
+            where.lockedBalance?.gte !== undefined &&
+            wallet.lockedBalance < where.lockedBalance.gte
+          ) {
             return { count: 0 };
           }
-          if (data.availableBalance?.increment !== undefined) wallet.availableBalance += data.availableBalance.increment;
-          if (data.lockedBalance?.increment !== undefined) wallet.lockedBalance += data.lockedBalance.increment;
+          if (data.availableBalance?.increment !== undefined)
+            wallet.availableBalance += data.availableBalance.increment;
+          if (data.lockedBalance?.increment !== undefined)
+            wallet.lockedBalance += data.lockedBalance.increment;
           return { count: 1 };
         },
       },

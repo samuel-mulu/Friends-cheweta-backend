@@ -17,7 +17,9 @@ function createHarness(status: MatchStatus = MatchStatus.FINISHING) {
   const tx = {
     matchSettlement: {
       findUnique: jest.fn(async () => settlementRow),
-      create: jest.fn(async ({ data }: any) => (settlementRow = { id: 's1', settledAt: new Date(), ...data })),
+      create: jest.fn(
+        async ({ data }: any) => (settlementRow = { id: 's1', settledAt: new Date(), ...data }),
+      ),
     },
     match: {
       findUnique: jest.fn(async () => match),
@@ -27,12 +29,21 @@ function createHarness(status: MatchStatus = MatchStatus.FINISHING) {
     matchParticipant: { updateMany: jest.fn(async () => ({ count: 2 })) },
     matchEntry: { updateMany: jest.fn(async () => ({ count: 2 })) },
   };
-  const prisma = { $transaction: jest.fn(async (run: any) => run(tx)), match: { findUnique: jest.fn(async () => null) } };
+  const prisma = {
+    $transaction: jest.fn(async (run: any) => run(tx)),
+    match: { findUnique: jest.fn(async () => null) },
+  };
   const wallet = { releaseFundsInTransaction: jest.fn(async () => undefined) };
   const notifications = { create: jest.fn(async () => undefined) };
   const stats = { recordMatch: jest.fn(async () => 0) };
   const risk = { analyzeFinishedMatch: jest.fn(async () => undefined) };
-  const service = new SettlementService(prisma as any, wallet as any, notifications as any, risk as any, stats as any);
+  const service = new SettlementService(
+    prisma as any,
+    wallet as any,
+    notifications as any,
+    risk as any,
+    stats as any,
+  );
   return { service, tx, wallet, notifications };
 }
 
@@ -44,14 +55,31 @@ describe('SettlementService.settleDraw', () => {
     expect(h.wallet.releaseFundsInTransaction).toHaveBeenCalledTimes(2);
     expect(h.wallet.releaseFundsInTransaction).toHaveBeenCalledWith(
       h.tx,
-      expect.objectContaining({ userId: 'A', amountMinor: 1000n, type: WalletTransactionType.GAME_ENTRY_RELEASE }),
+      expect.objectContaining({
+        userId: 'A',
+        amountMinor: 1000n,
+        type: WalletTransactionType.GAME_ENTRY_RELEASE,
+      }),
     );
-    expect(result).toMatchObject({ winnerUserId: null, potAmountMinor: '2000', payoutAmountMinor: '0', platformFeeMinor: '0' });
+    expect(result).toMatchObject({
+      winnerUserId: null,
+      potAmountMinor: '2000',
+      payoutAmountMinor: '0',
+      platformFeeMinor: '0',
+    });
     expect(h.tx.match.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: MatchStatus.FINISHED, isDraw: true, winnerOrder: [] }) }),
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: MatchStatus.FINISHED,
+          isDraw: true,
+          winnerOrder: [],
+        }),
+      }),
     );
     expect(h.tx.matchEntry.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: MatchEntryStatus.REFUNDED }) }),
+      expect.objectContaining({
+        data: expect.objectContaining({ status: MatchEntryStatus.REFUNDED }),
+      }),
     );
   });
 
@@ -67,6 +95,11 @@ describe('SettlementService.settleDraw', () => {
     await h.service.settleDraw('m1');
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(h.notifications.create).toHaveBeenCalledTimes(2);
-    expect(h.notifications.create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Match drawn', data: expect.objectContaining({ draw: true }) }));
+    expect(h.notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Match drawn',
+        data: expect.objectContaining({ draw: true }),
+      }),
+    );
   });
 });

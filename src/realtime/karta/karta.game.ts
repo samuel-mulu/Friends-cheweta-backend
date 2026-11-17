@@ -30,7 +30,11 @@ export const KARTA_GAME_CODE = 'KARTA';
 const cryptoSeed = () => randomBytes(32).toString('hex');
 
 /** Karta Lat Lat on the shared turn-game runtime. */
-export const KARTA_GAME: TurnGameDefinition<KartaMatchRuntimeState, KartaRuntimeCommand, KartaRuntimeEvent> = {
+export const KARTA_GAME: TurnGameDefinition<
+  KartaMatchRuntimeState,
+  KartaRuntimeCommand,
+  KartaRuntimeEvent
+> = {
   code: KARTA_GAME_CODE,
   key: 'karta',
   eventNames: {
@@ -44,19 +48,25 @@ export const KARTA_GAME: TurnGameDefinition<KartaMatchRuntimeState, KartaRuntime
   defaultTurnSeconds: 15,
   isRulesVersion: isKartaRulesVersion,
   // Who starts (deals) round 1 is drawn fairly.
-  create: (matchId, [a, b]) => createKartaMatch(matchId, [a, b], randomInt(2) === 0 ? a : b, cryptoSeed),
+  create: (matchId, [a, b]) =>
+    createKartaMatch(matchId, [a, b], randomInt(2) === 0 ? a : b, cryptoSeed),
   execute: (state, command) => executeKartaCommand(state, command, cryptoSeed),
   isFinished: (state) => state.game.phase === 'FINISHED',
   // Time ran out: the chooser calls a random rank, or the starter turns the next card.
   autoCommand: (state) =>
-    state.game.roundPhase === 'CALLING' ? { type: 'CALL', rank: KARTA_RANKS[randomInt(KARTA_RANKS.length)] } : { type: 'FLIP' },
+    state.game.roundPhase === 'CALLING'
+      ? { type: 'CALL', rank: KARTA_RANKS[randomInt(KARTA_RANKS.length)] }
+      : { type: 'FLIP' },
   resignCommand: () => ({ type: 'RESIGN' }),
   // Never send the seed of a round in play.
   publicState: publicKartaState,
 };
 
 @Injectable()
-export class KartaRuntimeRepository extends RuntimeStore<KartaMatchRuntimeState, KartaRuntimeEvent> {
+export class KartaRuntimeRepository extends RuntimeStore<
+  KartaMatchRuntimeState,
+  KartaRuntimeEvent
+> {
   constructor(redis: RedisService, config: ConfigService<AppEnv, true>) {
     super(
       redis,
@@ -68,7 +78,11 @@ export class KartaRuntimeRepository extends RuntimeStore<KartaMatchRuntimeState,
 }
 
 @Injectable()
-export class KartaRuntimeService extends TurnGameRuntime<KartaMatchRuntimeState, KartaRuntimeCommand, KartaRuntimeEvent> {
+export class KartaRuntimeService extends TurnGameRuntime<
+  KartaMatchRuntimeState,
+  KartaRuntimeCommand,
+  KartaRuntimeEvent
+> {
   constructor(
     prisma: PrismaService,
     redis: RedisService,
@@ -82,7 +96,11 @@ export class KartaRuntimeService extends TurnGameRuntime<KartaMatchRuntimeState,
 }
 
 @Injectable()
-export class KartaTurnTimerService extends TurnGameTimer<KartaMatchRuntimeState, KartaRuntimeCommand, KartaRuntimeEvent> {
+export class KartaTurnTimerService extends TurnGameTimer<
+  KartaMatchRuntimeState,
+  KartaRuntimeCommand,
+  KartaRuntimeEvent
+> {
   constructor(
     runtime: KartaRuntimeService,
     redis: RedisService,
@@ -91,6 +109,13 @@ export class KartaTurnTimerService extends TurnGameTimer<KartaMatchRuntimeState,
     joins: MatchJoinTracker,
     config: ConfigService<AppEnv, true>,
   ) {
-    super(runtime, redis, prisma, publisher, joins, config.get('GAME_MAX_CONSECUTIVE_TIMEOUTS', { infer: true }));
+    super(
+      runtime,
+      redis,
+      prisma,
+      publisher,
+      joins,
+      config.get('GAME_MAX_CONSECUTIVE_TIMEOUTS', { infer: true }),
+    );
   }
 }

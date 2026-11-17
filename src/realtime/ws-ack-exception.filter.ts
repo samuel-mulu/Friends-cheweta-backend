@@ -15,7 +15,7 @@ export class WsAckExceptionFilter implements ExceptionFilter {
     ack({
       ok: false,
       code: 'VALIDATION_FAILED',
-      message: Array.isArray(message) ? message.join(', ') : message ?? 'Invalid request.',
+      message: Array.isArray(message) ? message.join(', ') : (message ?? 'Invalid request.'),
     });
   }
 }

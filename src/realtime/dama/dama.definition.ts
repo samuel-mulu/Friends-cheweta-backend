@@ -16,7 +16,11 @@ import { TurnGameDefinition } from '../turn-game/turn-game.definition';
 export const DAMA_GAME_CODE = 'DAMA';
 
 /** Ethiopian Dama on the shared turn-game runtime. */
-export const DAMA_GAME: TurnGameDefinition<DamaMatchRuntimeState, DamaRuntimeCommand, DamaRuntimeEvent> = {
+export const DAMA_GAME: TurnGameDefinition<
+  DamaMatchRuntimeState,
+  DamaRuntimeCommand,
+  DamaRuntimeEvent
+> = {
   code: DAMA_GAME_CODE,
   key: 'dama',
   eventNames: DAMA_EVENT_NAMES,
@@ -32,11 +36,16 @@ export const DAMA_GAME: TurnGameDefinition<DamaMatchRuntimeState, DamaRuntimeCom
   // A timed-out player gets a sensible move (one-ply search), not a random one.
   autoCommand: (state, playerId) => ({
     type: 'MOVE',
-    path: new MinimaxDamaBot(1, state.game.version + 1).choose(state.game, colorOfPlayer(state.game, playerId), currentLegalMoves(state))
-      .path,
+    path: new MinimaxDamaBot(1, state.game.version + 1).choose(
+      state.game,
+      colorOfPlayer(state.game, playerId),
+      currentLegalMoves(state),
+    ).path,
   }),
   resignCommand: () => ({ type: 'RESIGN' }),
   publicState: (state) => state,
-  playerInfo: (state, userId) => ({ color: state.game.players.find((p) => p.userId === userId)?.color ?? null }),
+  playerInfo: (state, userId) => ({
+    color: state.game.players.find((p) => p.userId === userId)?.color ?? null,
+  }),
   snapshotExtras: (state) => ({ legalMoves: currentLegalMoves(state) }),
 };
