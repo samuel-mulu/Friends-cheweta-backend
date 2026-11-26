@@ -13,7 +13,7 @@ import {
   LUDO_BASE_PROGRESS,
   tokensToWinOf,
 } from '../domain';
-import { LudoEngine } from '../engine';
+import { LudoEngine, skipsCapture } from '../engine';
 import {
   LudoMatchRuntimeState,
   LudoRuntimeCommand,
@@ -47,6 +47,9 @@ function cloneRuntimeState(state: LudoMatchRuntimeState): LudoMatchRuntimeState 
       rolls: { ...state.startingRoll.rolls },
     },
     resignedPlayerIds: [...state.resignedPlayerIds],
+    ...(state.missedCapturePlayerIds
+      ? { missedCapturePlayerIds: [...state.missedCapturePlayerIds] }
+      : {}),
   };
 }
 
@@ -317,6 +320,14 @@ export class LudoMatchRuntime {
     if (!game.legalTokenIds.includes(command.tokenId)) throw new Error('ILLEGAL_LUDO_MOVE');
 
     const diceValue = game.diceValue;
+    // "Forget to send back and you lose": choosing another token while a
+    // capture was possible ends this player's game (the move is not played).
+    if (
+      this.rules.missedCaptureLoses &&
+      skipsCapture(this.engine.getLegalMoves(game, command.playerId, diceValue), command.tokenId)
+    ) {
+      return this.forfeitForMissedCapture(command);
+    }
     const beforeFinished = this.playerFinished(command.playerId);
     const result = this.engine.move(game, command.playerId, command.tokenId, diceValue);
     this.state.game = result.state;
@@ -407,6 +418,32 @@ export class LudoMatchRuntime {
     if (this.tryFinishMatch(events)) return events;
 
     if (game.currentPlayerId === command.playerId) this.advanceTurn(events);
+    return events;
+  }
+
+  /**
+   * Out like a resignation (ranked behind the players still in), with its own
+   * event so everyone sees why. With two players the opponent wins.
+   */
+  private forfeitForMissedCapture(command: MoveTokenCommand): LudoRuntimeEvent[] {
+    const game = this.state.game;
+    game.version += 1;
+    game.diceValue = null;
+    game.legalTokenIds = [];
+    this.state.resignedPlayerIds.push(command.playerId);
+    this.state.missedCapturePlayerIds = [
+      ...(this.state.missedCapturePlayerIds ?? []),
+      command.playerId,
+    ];
+    const events: LudoRuntimeEvent[] = [
+      this.event(LudoRuntimeEventType.CAPTURE_MISSED, {
+        playerId: command.playerId,
+        tokenId: command.tokenId,
+        tokenIds: this.retireTokens(command.playerId),
+      }),
+    ];
+    if (this.tryFinishMatch(events)) return events;
+    this.advanceTurn(events);
     return events;
   }
 
@@ -548,6 +585,10 @@ export class LudoMatchRuntime {
     }
     if (new Set(this.state.resignedPlayerIds).size !== this.state.resignedPlayerIds.length) {
       throw new Error('Duplicate resigned player.');
+    }
+    for (const id of this.state.missedCapturePlayerIds ?? []) {
+      if (!this.state.resignedPlayerIds.includes(id))
+        throw new Error('Missed capture without forfeit.');
     }
     if (new Set(this.state.game.winnerOrder).size !== this.state.game.winnerOrder.length) {
       throw new Error('Duplicate winner ranking.');

@@ -122,7 +122,8 @@ export function simulateLudoMatch(options: {
       if (game.diceValue === null || game.legalTokenIds.length === 0) {
         throw new Error('WAITING_FOR_MOVE_WITHOUT_LEGAL_MOVE');
       }
-      const legalMoves = engine.getLegalMoves(game, playerId, game.diceValue);
+      // Bots play carefully: under "forget to send back and you lose" they take the capture.
+      const legalMoves = engine.getChoosableMoves(game, playerId, game.diceValue);
       const bot = options.bots[playerId];
       if (!bot) throw new Error(`Missing bot for ${playerId}.`);
       const chosen = bot.chooseMove(game, playerId, game.diceValue, legalMoves);

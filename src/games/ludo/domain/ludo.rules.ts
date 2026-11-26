@@ -38,7 +38,13 @@ export const LUDO_CLASSIC_V1 = {
   sixGrantsExtraRoll: true,
   maxConsecutiveSixes: 3,
   thirdConsecutiveSixForfeitsRoll: true,
+  /** Landing on a lone opponent (off a safe square) sends it back to its yard. */
   captureEnabled: true,
+  /**
+   * "Forget to send back and you lose": moving another token while a capture
+   * was possible forfeits the match. Captures are never hinted to the player.
+   */
+  missedCaptureLoses: false,
   captureGrantsExtraRoll: false,
   safeSquaresEnabled: true,
   blockadeEnabled: true,
@@ -77,13 +83,41 @@ export const LUDO_CLASSIC_V3 = {
   board: LUDO_STANDARD_BOARD,
 } as const;
 
-export type LudoRules = typeof LUDO_CLASSIC_V1 | typeof LUDO_CLASSIC_V2 | typeof LUDO_CLASSIC_V3;
+/**
+ * Player-facing Ludo types (a game mode picks one by its rules version):
+ * - መመለስ ያለበት (with sending back): LUDO_CLASSIC_V3, the classic rules.
+ * - መመለስ የሌለበት (no sending back): nobody can be captured; tokens of
+ *   different players may share any square. Blockades still block.
+ * - መመለስ የረሳ ይሸነፋል (forget to send back and you lose): classic rules, but
+ *   moving another token while a capture was possible forfeits the match.
+ */
+export const LUDO_NO_CAPTURE_V1 = {
+  ...LUDO_CLASSIC_V3,
+  version: 'LUDO_NO_CAPTURE_V1' as const,
+  captureEnabled: false,
+  captureGrantsExtraRoll: false,
+} as const;
+
+export const LUDO_MISSED_CAPTURE_V1 = {
+  ...LUDO_CLASSIC_V3,
+  version: 'LUDO_MISSED_CAPTURE_V1' as const,
+  missedCaptureLoses: true,
+} as const;
+
+export type LudoRules =
+  | typeof LUDO_CLASSIC_V1
+  | typeof LUDO_CLASSIC_V2
+  | typeof LUDO_CLASSIC_V3
+  | typeof LUDO_NO_CAPTURE_V1
+  | typeof LUDO_MISSED_CAPTURE_V1;
 export type LudoRulesVersion = LudoRules['version'];
 
 const RULES: Record<LudoRulesVersion, LudoRules> = {
   LUDO_CLASSIC_V1,
   LUDO_CLASSIC_V2,
   LUDO_CLASSIC_V3,
+  LUDO_NO_CAPTURE_V1,
+  LUDO_MISSED_CAPTURE_V1,
 };
 
 export const LUDO_RULES_VERSIONS = Object.keys(RULES) as LudoRulesVersion[];

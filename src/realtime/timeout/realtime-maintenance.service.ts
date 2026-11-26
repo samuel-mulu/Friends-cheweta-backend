@@ -1,7 +1,8 @@
-import { Injectable, Logger, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationShutdown, OnModuleInit, Optional } from '@nestjs/common';
 import { ChallengeService } from '../../challenge/challenge.service';
 import { MatchHistoryService } from '../../match-history/match-history.service';
 import { SettlementService } from '../../settlement/settlement.service';
+import { LobbyMatchmakingService } from '../lobby-matchmaking.service';
 import { RealtimePublisherService } from '../realtime-publisher.service';
 import { GameRegistry } from '../turn-game/game-registry';
 import { DisconnectGraceService } from './disconnect-grace.service';
@@ -32,6 +33,8 @@ export class RealtimeMaintenanceService implements OnModuleInit, OnApplicationSh
     private readonly disconnects: DisconnectGraceService,
     private readonly prematch: PrematchCleanupService,
     private readonly history: MatchHistoryService,
+    /** Broadcasts sweep outcomes and re-pairs players returned to READY. */
+    @Optional() private readonly matchmaking?: LobbyMatchmakingService,
   ) {}
 
   onModuleInit(): void {
@@ -64,7 +67,10 @@ export class RealtimeMaintenanceService implements OnModuleInit, OnApplicationSh
       this.logger.warn(`Challenge sweep failed: ${error.message}`);
       return [];
     });
-    for (const transition of transitions) this.publisher.publishChallengeTransition(transition);
+    for (const transition of transitions) {
+      if (this.matchmaking) this.matchmaking.publish(transition);
+      else this.publisher.publishChallengeTransition(transition);
+    }
     for (const game of this.games.all()) await game.timer.processDue();
     await this.disconnects.processDue();
   }

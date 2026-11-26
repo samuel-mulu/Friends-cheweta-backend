@@ -29,6 +29,7 @@ import {
   LudoTurnTimerService,
 } from './ludo/ludo-runtime.service';
 import { LudoGateway } from './ludo/ludo.gateway';
+import { LobbyMatchmakingService } from './lobby-matchmaking.service';
 import { MatchJoinTracker } from './match-join-tracker';
 import { PresenceService } from './presence.service';
 import { RealtimePublisherService } from './realtime-publisher.service';
@@ -56,6 +57,7 @@ import { GameRegistry } from './turn-game/game-registry';
     RealtimeAuthService,
     PresenceService,
     RealtimePublisherService,
+    LobbyMatchmakingService,
     MatchJoinTracker,
     // Ludo
     LudoRuntimeRepository,

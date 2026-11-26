@@ -12,8 +12,10 @@ export type ChallengeStatus =
  * LOBBY: both players READY in the same lobby.
  * REMATCH: the two players of a finished match; no lobby involved.
  * INVITE: opponent unknown until someone joins with `inviteCode`.
+ * AUTO: two players READY at the same terms, paired by the server (created
+ * directly as ACCEPTING; nobody answers it).
  */
-export type ChallengeKind = 'LOBBY' | 'REMATCH' | 'INVITE';
+export type ChallengeKind = 'LOBBY' | 'REMATCH' | 'INVITE' | 'AUTO';
 
 /** Stored in Redis. Fields are strings/numbers only so Lua can re-encode it safely. */
 export type ChallengeRecord = {

@@ -12,8 +12,10 @@ const engine = new LudoEngine();
  */
 export function chooseTimeoutMove(game: LudoGameState, playerId: string): string | null {
   if (game.diceValue === null || game.legalTokenIds.length === 0) return null;
+  // Choosable: under "forget to send back and you lose" an absent player is
+  // never made to forfeit — a capture is always taken when one exists.
   const legal = engine
-    .getLegalMoves(game, playerId, game.diceValue)
+    .getChoosableMoves(game, playerId, game.diceValue)
     .filter((move) => game.legalTokenIds.includes(move.tokenId));
   if (legal.length === 0) return null;
   if (legal.length === 1) return legal[0].tokenId;

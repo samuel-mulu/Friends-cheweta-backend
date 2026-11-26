@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Logger, Optional } from '@nestjs/common';
 import {
   OnGatewayConnection,
   OnGatewayDisconnect,
@@ -10,9 +10,13 @@ import { Server } from 'socket.io';
 import { ChallengeService } from '../../challenge/challenge.service';
 import { SOCKET_EVENTS_PER_SECOND } from '../../common/rate-limit';
 import { LobbyService } from '../../lobby/lobby.service';
+import { LobbyMatchmakingService } from '../lobby-matchmaking.service';
 import { PresenceService } from '../presence.service';
 import { RealtimeAuthService } from '../realtime-auth.service';
-import { PLAYER_COMMUNICATIONS_ROOM, RealtimePublisherService } from '../realtime-publisher.service';
+import {
+  PLAYER_COMMUNICATIONS_ROOM,
+  RealtimePublisherService,
+} from '../realtime-publisher.service';
 import { AuthenticatedSocket, REALTIME_PROTOCOL_VERSION } from '../realtime.types';
 import { DisconnectGraceService } from '../timeout/disconnect-grace.service';
 import { toErrorPayload } from '../ws-errors';
@@ -34,6 +38,7 @@ export class ConnectionGateway implements OnGatewayInit, OnGatewayConnection, On
     private readonly challenge: ChallengeService,
     private readonly publisher: RealtimePublisherService,
     private readonly disconnects: DisconnectGraceService,
+    @Optional() private readonly matchmaking?: LobbyMatchmakingService,
   ) {}
 
   afterInit(server: Server): void {
@@ -79,7 +84,11 @@ export class ConnectionGateway implements OnGatewayInit, OnGatewayConnection, On
 
   private async leaveLobby(userId: string): Promise<void> {
     const cancelled = await this.challenge.cancelForUser(userId);
-    if (cancelled) this.publisher.publishChallengeTransition(cancelled);
+    // The other player returns to READY and may be auto-paired with someone else.
+    if (cancelled) {
+      if (this.matchmaking) this.matchmaking.publish(cancelled);
+      else this.publisher.publishChallengeTransition(cancelled);
+    }
     const left = await this.lobby.leave(userId);
     if (left.gameModeId) {
       this.publisher.publishLobby(left.gameModeId, 'lobby:player_left', { player: left.player });

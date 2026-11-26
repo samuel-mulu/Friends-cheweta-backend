@@ -1,3 +1,5 @@
+import { isDamaRulesVersion } from '../games/dama/domain';
+import { isLudoRulesVersion } from '../games/ludo/domain';
 import { AggressiveBot, HeuristicBot, LudoBot, RandomBot } from '../games/ludo/simulation/bots';
 
 export type PracticeLevel = 'EASY' | 'NORMAL' | 'HARD';
@@ -9,6 +11,17 @@ export const PRACTICE_RULES_VERSION = 'LUDO_CLASSIC_V3' as const;
 
 export type PracticeGame = 'LUDO' | 'DAMA';
 export const PRACTICE_GAMES: readonly PracticeGame[] = ['LUDO', 'DAMA'];
+
+/** Which rules versions (game types) each practice game can be played with. */
+const PRACTICE_RULES: Record<PracticeGame, (version: string) => boolean> = {
+  LUDO: isLudoRulesVersion,
+  DAMA: isDamaRulesVersion,
+};
+
+/** The requested type when it belongs to [game]; null otherwise (the caller's default applies). */
+export function practiceRulesFor(game: PracticeGame, requested?: string): string | null {
+  return requested && PRACTICE_RULES[game](requested) ? requested : null;
+}
 
 /** One bot account per level (created by prisma/seed.ts). */
 export const PRACTICE_BOTS: Record<PracticeLevel, { fullName: string; phone: string }> = {

@@ -1,6 +1,6 @@
 import { LudoGameState, isSafeGlobalSquare } from '../domain';
 import { LudoLegalMove, LudoMovePreview, LudoMoveResolution } from './ludo.engine.types';
-import { getLegalMoves, getLegalTokenIds } from './ludo.legal-moves';
+import { getChoosableMoves, getLegalMoves, getLegalTokenIds } from './ludo.legal-moves';
 import { applyLudoMove } from './ludo.move-resolver';
 
 /**
@@ -10,6 +10,11 @@ import { applyLudoMove } from './ludo.move-resolver';
 export class LudoEngine {
   getLegalMoves(state: LudoGameState, playerId: string, diceValue: number): LudoLegalMove[] {
     return getLegalMoves(state, playerId, diceValue);
+  }
+
+  /** Legal moves that don't forfeit under the match's rules (what to play for someone). */
+  getChoosableMoves(state: LudoGameState, playerId: string, diceValue: number): LudoLegalMove[] {
+    return getChoosableMoves(state, playerId, diceValue);
   }
 
   /** Landing preview for the legal moves (derived; nothing is stored). */

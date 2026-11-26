@@ -14,7 +14,9 @@ import {
   CUSTOM_CODE_SUFFIX,
   CUSTOM_STAKE_MAX_MINOR,
   CUSTOM_STAKE_MIN_MINOR,
+  DEFAULT_TOKENS_TO_WIN,
   LOBBY_TTL_SECONDS,
+  LobbyReadyPrefs,
   LobbyGameSnapshot,
   LobbyPlayerView,
   LobbySnapshot,
@@ -347,7 +349,14 @@ export class LobbyService {
     };
   }
 
-  async ready(userId: string): Promise<{ gameModeId: string; player: LobbyPlayerView }> {
+  /**
+   * Ready at the player's stake, with what they ask for: the Ludo goal (other
+   * games ignore it) and whether to be matched automatically (default on).
+   */
+  async ready(
+    userId: string,
+    prefs: LobbyReadyPrefs = {},
+  ): Promise<{ gameModeId: string; player: LobbyPlayerView }> {
     const context = await this.requireContext(userId);
     if (context.state === 'READY')
       throw new ConflictException({
@@ -359,10 +368,17 @@ export class LobbyService {
         code: 'LOBBY_USER_BUSY',
         message: 'You cannot ready while busy.',
       });
-    await this.assertCanPlay([userId], context.gameModeId);
+    const mode = await this.assertCanPlay([userId], context.gameModeId);
 
     const readyAt = new Date().toISOString();
-    const next: LobbyUserContext = { ...context, state: 'READY', readyAt };
+    const next: LobbyUserContext = {
+      ...context,
+      state: 'READY',
+      readyAt,
+      autoMatch: prefs.autoMatch ?? true,
+      tokensToWin:
+        mode.game.code === 'LUDO' ? (prefs.tokensToWin ?? DEFAULT_TOKENS_TO_WIN) : undefined,
+    };
     await this.redis
       .raw()
       .multi()
@@ -478,6 +494,13 @@ export class LobbyService {
         ...(context.stakeAmountMinor ? { stakeAmountMinor: context.stakeAmountMinor } : {}),
         state: context.state,
         ...(context.readyAt ? { readyAt: context.readyAt } : {}),
+        // What the player asked for (shown as badges; only while ready or challenged).
+        ...(context.state !== 'ONLINE' && context.tokensToWin
+          ? { tokensToWin: context.tokensToWin }
+          : {}),
+        ...(context.state !== 'ONLINE' && context.autoMatch !== undefined
+          ? { autoMatch: context.autoMatch }
+          : {}),
         ...(viewerUserId === userId ? { isSelf: true } : {}),
       });
     }

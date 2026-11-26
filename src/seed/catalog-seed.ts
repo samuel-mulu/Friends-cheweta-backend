@@ -40,36 +40,30 @@ export async function seedCatalog(prisma: PrismaClient): Promise<{ bots: number 
     },
   });
 
-  const ludoModes = [
-    { code: 'LUDO_1V1_10', name: 'Ludo 1v1 - 10 ETB', stakeAmountMinor: 1000n },
-    { code: 'LUDO_1V1_20', name: 'Ludo 1v1 - 20 ETB', stakeAmountMinor: 2000n },
-    { code: 'LUDO_1V1_50', name: 'Ludo 1v1 - 50 ETB', stakeAmountMinor: 5000n },
+  // Three types, same stakes: መመለስ ያለበት (classic), መመለስ የሌለበት (no
+  // captures) and መመለስ የረሳ ይሸነፋል (skipping a capture loses).
+  const ludoTypes = [
+    { prefix: 'LUDO', label: '', rules: 'LUDO_CLASSIC_V3' },
+    { prefix: 'LUDO_NOCAP', label: ' መመለስ የሌለበት', rules: 'LUDO_NO_CAPTURE_V1' },
+    { prefix: 'LUDO_MISS', label: ' መመለስ የረሳ ይሸነፋል', rules: 'LUDO_MISSED_CAPTURE_V1' },
   ];
-  for (const mode of ludoModes) {
-    await prisma.gameMode.upsert({
-      where: { code: mode.code },
-      update: {
+  const ludoStakes = [1000n, 2000n, 5000n];
+  for (const type of ludoTypes) {
+    for (const stakeAmountMinor of ludoStakes) {
+      const etb = Number(stakeAmountMinor / 100n);
+      const code = `${type.prefix}_1V1_${etb}`;
+      const data = {
         gameId: ludo.id,
-        name: mode.name,
+        name: `Ludo${type.label} 1v1 - ${etb} ETB`,
         playerCount: 2,
-        stakeAmountMinor: mode.stakeAmountMinor,
+        stakeAmountMinor,
         platformFeeBps: 0,
         turnDurationSeconds: 30,
-        rulesVersion: 'LUDO_CLASSIC_V3',
+        rulesVersion: type.rules,
         enabled: true,
-      },
-      create: {
-        gameId: ludo.id,
-        code: mode.code,
-        name: mode.name,
-        playerCount: 2,
-        stakeAmountMinor: mode.stakeAmountMinor,
-        platformFeeBps: 0,
-        turnDurationSeconds: 30,
-        rulesVersion: 'LUDO_CLASSIC_V3',
-        enabled: true,
-      },
-    });
+      };
+      await prisma.gameMode.upsert({ where: { code }, update: data, create: { code, ...data } });
+    }
   }
 
   const dama = await prisma.game.upsert({

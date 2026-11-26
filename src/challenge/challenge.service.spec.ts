@@ -503,4 +503,113 @@ describe('ChallengeService (real Redis Lua)', () => {
       );
     });
   });
+
+  /** A, B and C are READY at the same stake (in that order), auto-match on by default. */
+  describe('automatic matching', () => {
+    /** Change what a ready player asked for (e.g. the Ludo goal) in place. */
+    const setPrefs = async (userId: string, prefs: Record<string, unknown>) => {
+      const context = await h.lobby.getContext(userId);
+      await h.redis
+        .raw()
+        .set(h.redis.key('lobby', 'user', userId), JSON.stringify({ ...context, ...prefs }), {
+          EX: 180,
+        });
+    };
+    const matched = () =>
+      [...h.matches.values()].map((m) => m.participants.map((p: any) => p.userId).sort());
+
+    it('pairs a newly ready player with the one who waited longest and starts the match', async () => {
+      const result = await h.service.autoPair('C');
+      expect(result?.event).toBe('challenge:accepted');
+      expect(result?.challenge).toMatchObject({ kind: 'AUTO', challengerId: 'A', opponentId: 'C' });
+      expect(matched()).toEqual([['A', 'C']]);
+      expect(result?.matchReady.map((m) => m.userId).sort()).toEqual(['A', 'C']);
+      expect(await h.state('A')).toBeNull();
+      expect(await h.state('B')).toBe('READY');
+    });
+
+    it('pairs only the same terms: auto-match on for both, and the same goal', async () => {
+      await setPrefs('A', { autoMatch: false });
+      await setPrefs('B', { tokensToWin: 2 });
+      await setPrefs('C', { tokensToWin: 4 });
+      expect(await h.service.autoPair('C')).toBeNull();
+      await setPrefs('C', { tokensToWin: 2 });
+      expect((await h.service.autoPair('C'))?.challenge).toMatchObject({
+        challengerId: 'B',
+        opponentId: 'C',
+        tokensToWin: 2,
+      });
+      expect(h.matchCreation.createSecuredMatch).toHaveBeenLastCalledWith(
+        expect.objectContaining({ tokensToWin: 2 }),
+      );
+    });
+
+    it('a player who turned auto-match off is never paired automatically', async () => {
+      await setPrefs('C', { autoMatch: false });
+      expect(await h.service.autoPair('C')).toBeNull();
+      expect(h.matchCreation.createSecuredMatch).not.toHaveBeenCalled();
+    });
+
+    it('a manual request racing a pairing: each player ends up in exactly one of them', async () => {
+      const [manual, auto] = await Promise.allSettled([
+        h.service.create('B', 'A', cmd()),
+        h.service.autoPair('C'),
+      ]);
+      const pairedWithA = matched().some((players) => players.includes('A'));
+      if (manual.status === 'fulfilled') {
+        // The request reserved A and B first: C finds nobody free.
+        expect(pairedWithA).toBe(false);
+        expect(await h.state('A')).toBe('CHALLENGED');
+        expect(await h.state('C')).toBe('READY');
+      } else {
+        // The pairing took A first: the request was refused cleanly.
+        expect(auto.status === 'fulfilled' && auto.value?.challenge.opponentId).toBe('C');
+        expect(manual.reason).toBeInstanceOf(ConflictException);
+        expect(await h.state('B')).toBe('READY');
+      }
+    });
+
+    it('players readying at the same moment are each in at most one match', async () => {
+      await Promise.all([
+        h.service.autoPair('A'),
+        h.service.autoPair('B'),
+        h.service.autoPair('C'),
+      ]);
+      const everyone = matched().flat();
+      expect(everyone.length).toBeGreaterThanOrEqual(2);
+      expect(new Set(everyone).size).toBe(everyone.length);
+      expect(h.matchCreation.createSecuredMatch).toHaveBeenCalledTimes(matched().length);
+    });
+
+    it('a pairing whose match cannot start returns both to READY and pairs someone else next', async () => {
+      h.matchCreation.createSecuredMatch.mockRejectedValueOnce(new Error('database down'));
+      const failed = await h.service.autoPair('C');
+      expect(failed?.event).toBe('challenge:cancelled');
+      expect(failed?.restoredPlayers.map((p) => p.userId).sort()).toEqual(['A', 'C']);
+      expect(await h.state('A')).toBe('READY');
+
+      // A and C cool down; C is paired with B instead.
+      expect((await h.service.autoPair('C'))?.challenge).toMatchObject({
+        challengerId: 'B',
+        opponentId: 'C',
+      });
+    });
+
+    it('someone who just declined a player is not auto-paired with them right away', async () => {
+      const { challenge } = await h.service.create('B', 'A', cmd());
+      await h.service.reject('A', challenge.id, cmd());
+      // B is skipped (cooldown); C, who has waited longest, is paired with A.
+      expect((await h.service.autoPair('A'))?.challenge).toMatchObject({
+        challengerId: 'C',
+        opponentId: 'A',
+      });
+      expect(matched()).toEqual([['A', 'C']]);
+    });
+
+    it('a manual request plays the goal the waiting player chose', async () => {
+      await setPrefs('B', { tokensToWin: 1 });
+      const { challenge } = await h.service.create('A', 'B', cmd(), 4);
+      expect(challenge.tokensToWin).toBe(1);
+    });
+  });
 });

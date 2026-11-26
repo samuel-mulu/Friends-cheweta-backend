@@ -1,5 +1,4 @@
-import { IsIn, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
-import { DAMA_RULES_VERSIONS, DamaRulesVersion } from '../../games/dama/domain';
+import { IsIn, IsInt, IsOptional, IsUUID, Matches, Max, Min } from 'class-validator';
 import {
   PRACTICE_GAMES,
   PRACTICE_LEVELS,
@@ -26,8 +25,11 @@ export class PracticeStartDto {
   @IsIn(PRACTICE_GAMES)
   game?: PracticeGame;
 
-  /** Dama only: ታንከኛ `DAMA_ET_V1` (default) or እግረኛ `DAMA_ET_FORWARD_V1`. */
+  /**
+   * The game type (rules version), e.g. Dama `DAMA_ET_FORWARD_V1` or Ludo
+   * `LUDO_NO_CAPTURE_V1`. One of another game is ignored (default rules).
+   */
   @IsOptional()
-  @IsIn(DAMA_RULES_VERSIONS)
-  rulesVersion?: DamaRulesVersion;
+  @Matches(/^[A-Z0-9_]{2,40}$/)
+  rulesVersion?: string;
 }

@@ -6,6 +6,7 @@ import {
   isCommonTrackProgress,
   isSafeGlobalSquare,
   progressPath,
+  rulesFor,
   toGlobalTrackIndex,
 } from '../domain';
 import { LudoGameState, LudoToken, LudoTokenState } from '../domain';
@@ -35,15 +36,22 @@ function captureIdsAtDestination(
   globalSquare: number | null,
 ): string[] {
   if (globalSquare === null || isSafeGlobalSquare(globalSquare)) return [];
+  if (!rulesFor(state.rulesVersion).captureEnabled) return [];
   return getOpponentTokensOnGlobalSquare(state, ownerId, globalSquare).map((token) => token.id);
 }
 
+/**
+ * A blockade (2+ own tokens) may not form on a square an opponent occupies.
+ * With captures that can only happen on a safe square (anywhere else the
+ * opponent is captured); without captures it can happen on any square.
+ */
 function wouldCreateBlockadeWithOpponent(
   state: LudoGameState,
   ownerId: string,
   globalSquare: number,
 ): boolean {
-  if (!isSafeGlobalSquare(globalSquare)) return false;
+  if (rulesFor(state.rulesVersion).captureEnabled && !isSafeGlobalSquare(globalSquare))
+    return false;
   const opponents = getOpponentTokensOnGlobalSquare(state, ownerId, globalSquare);
   if (opponents.length === 0) return false;
   const ownTokens = getPlayerTokensOnGlobalSquare(state, ownerId, globalSquare);
@@ -141,6 +149,36 @@ export function getLegalMoves(
         : buildTrackMove(state, board, token, diceValue);
     return move ? [move] : [];
   });
+}
+
+/**
+ * The legal moves a careful player may choose without breaking the match's
+ * rules: under "forget to send back and you lose", only the captures when a
+ * capture exists. Every other rules version: all legal moves. Used by
+ * everything that moves for someone (turn timeouts, practice bots, the
+ * simulator), so the server never makes a player forfeit.
+ */
+export function getChoosableMoves(
+  state: LudoGameState,
+  playerId: string,
+  diceValue: number,
+): LudoLegalMove[] {
+  const legal = getLegalMoves(state, playerId, diceValue);
+  return choosableAmong(state, legal);
+}
+
+/** [getChoosableMoves] over moves already computed. */
+export function choosableAmong(state: LudoGameState, legal: LudoLegalMove[]): LudoLegalMove[] {
+  if (!rulesFor(state.rulesVersion).missedCaptureLoses) return legal;
+  const captures = legal.filter((move) => move.capturedTokenIds.length > 0);
+  return captures.length > 0 ? captures : legal;
+}
+
+/** Whether playing [tokenId] would skip a possible capture (only matters under missedCaptureLoses). */
+export function skipsCapture(legal: LudoLegalMove[], tokenId: string): boolean {
+  const chosen = legal.find((move) => move.tokenId === tokenId);
+  if (!chosen || chosen.capturedTokenIds.length > 0) return false;
+  return legal.some((move) => move.capturedTokenIds.length > 0);
 }
 
 export function getLegalTokenIds(

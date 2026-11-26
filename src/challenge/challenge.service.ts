@@ -11,7 +11,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 import { COMMITTED_MATCH_STATUSES } from '../common/match-status';
 import { MatchStatus } from '../generated/prisma/enums';
 import { LobbyService } from '../lobby/lobby.service';
-import { LOBBY_TTL_SECONDS } from '../lobby/lobby.types';
+import { DEFAULT_TOKENS_TO_WIN, LOBBY_TTL_SECONDS, LobbyUserContext } from '../lobby/lobby.types';
 import { MatchCreationService, MatchSource } from '../match-creation/match-creation.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
@@ -48,7 +48,26 @@ const MATCH_SOURCE: Record<ChallengeKind, MatchSource> = {
   LOBBY: 'CHALLENGE',
   REMATCH: 'REMATCH',
   INVITE: 'INVITE',
+  // An automatic pairing is a lobby pairing the server made.
+  AUTO: 'CHALLENGE',
 };
+
+/** Ready players looked at (oldest first) when pairing someone automatically. */
+const AUTO_PAIR_SCAN = 20;
+/** A pair that just failed to start, or where one declined the other, is not auto-paired again for this long. */
+const PAIR_COOLDOWN_SECONDS = 30;
+
+/** Same automatic-match terms: both want it, and (Ludo) the same goal. Stake/type = same game mode. */
+function sameAutoTerms(a: LobbyUserContext, b: LobbyUserContext): boolean {
+  return (
+    a.gameModeId === b.gameModeId &&
+    a.state === 'READY' &&
+    b.state === 'READY' &&
+    a.autoMatch !== false &&
+    b.autoMatch !== false &&
+    (a.tokensToWin ?? DEFAULT_TOKENS_TO_WIN) === (b.tokensToWin ?? DEFAULT_TOKENS_TO_WIN)
+  );
+}
 
 @Injectable()
 export class ChallengeService {
@@ -97,7 +116,8 @@ export class ChallengeService {
       createdAt: new Date(now).toISOString(),
       expiresAt: new Date(now + CHALLENGE_TTL_MS).toISOString(),
       expiresAtMs: now + CHALLENGE_TTL_MS,
-      tokensToWin,
+      // The waiting player said what they play (Ludo goal); the request plays that.
+      tokensToWin: opponent.tokensToWin ?? tokensToWin,
     };
 
     const result = (await this.redis.raw().eval(RESERVE_SCRIPT, {
@@ -179,6 +199,87 @@ export class ChallengeService {
       throw new ConflictException({ code: claim, message: 'Challenge is no longer pending.' });
 
     return this.completeAccept(challenge, userId, commandId);
+  }
+
+  /**
+   * Automatic matching: pair [userId] (just READY) with the player who has
+   * waited longest at the same terms — same game mode (game, type, stake),
+   * both with auto-match on, and (Ludo) the same goal — and start the match.
+   *
+   * Race-safe with manual requests and with other pairings: PAIR_SCRIPT
+   * re-checks both players atomically (READY, no open request) and reserves
+   * them in the same step, creating the record directly as ACCEPTING; from
+   * there the normal accept path creates the match (Match.challengeId is
+   * unique) or releases both back to READY. Returns the transition to
+   * broadcast, or null when nobody could be paired.
+   */
+  async autoPair(userId: string): Promise<ChallengeTransition | null> {
+    const me = await this.lobby.getContext(userId);
+    if (!me || me.state !== 'READY' || me.autoMatch === false) return null;
+
+    const waiting = await this.redis
+      .raw()
+      .zRange(this.readyKey(me.gameModeId), 0, AUTO_PAIR_SCAN - 1); // oldest first
+    for (const otherId of waiting) {
+      if (otherId === userId) continue;
+      const other = await this.lobby.getContext(otherId);
+      if (!other || !sameAutoTerms(other, me)) continue;
+      if (await this.redis.raw().exists(this.pairCooldownKey(otherId, userId))) continue;
+      try {
+        await this.lobby.assertCanPlay([otherId, userId], me.gameModeId);
+      } catch {
+        continue; // e.g. balance, or already in a match: try the next player
+      }
+
+      // The longer-waiting player is the challenger (seat order for the match).
+      const record = this.newRecord('AUTO', me.gameModeId, otherId, userId, CHALLENGE_TTL_MS, {
+        status: 'ACCEPTING',
+        acceptingAtMs: Date.now(),
+        ...(me.tokensToWin ? { tokensToWin: me.tokensToWin } : {}),
+      });
+      const result = (await this.redis.raw().eval(PAIR_SCRIPT, {
+        keys: [
+          this.contextKey(otherId),
+          this.contextKey(userId),
+          this.reservationKey(otherId),
+          this.reservationKey(userId),
+          this.challengeKey(record.id),
+          this.readyKey(record.gameModeId),
+          this.expiresKey(),
+        ],
+        arguments: [
+          JSON.stringify(record),
+          record.id,
+          String(record.expiresAtMs),
+          String(RECORD_TTL_SECONDS),
+          String(LOBBY_TTL_SECONDS),
+          String(DEFAULT_TOKENS_TO_WIN),
+        ],
+      })) as string;
+      if (result === 'NOT_READY' && !(await this.stillWaiting(userId))) return null; // I was taken meanwhile
+      if (result !== 'OK') continue; // they were taken or changed meanwhile: next player
+
+      this.logger.log(`auto_pair_started challenge=${record.id} players=${otherId},${userId}`);
+      try {
+        return await this.completeAccept(record, userId, `auto:${record.id}`);
+      } catch (error) {
+        if (!(error instanceof ChallengeAcceptFailedError)) throw error;
+        // Both are back to READY; don't pair this two again at once.
+        await this.coolDownPair(otherId, userId);
+        return error.transition;
+      }
+    }
+    return null;
+  }
+
+  private async stillWaiting(userId: string): Promise<boolean> {
+    const context = await this.lobby.getContext(userId);
+    return context?.state === 'READY';
+  }
+
+  /** Keep two players apart from automatic pairing for a moment. */
+  private async coolDownPair(a: string, b: string): Promise<void> {
+    await this.redis.raw().set(this.pairCooldownKey(a, b), '1', { EX: PAIR_COOLDOWN_SECONDS });
   }
 
   /**
@@ -473,6 +574,9 @@ export class ChallengeService {
         code: 'CHALLENGE_NOT_PENDING',
         message: 'Challenge is no longer pending.',
       });
+    // Someone who just said no is not auto-paired with the same player right away.
+    if (status === 'REJECTED')
+      await this.coolDownPair(challenge.challengerId, challenge.opponentId);
     await this.storeCommand(commandId, userId, challengeId);
     return { ...transition, duplicate: false };
   }
@@ -718,6 +822,12 @@ export class ChallengeService {
     return this.redis.key('challenge', 'invite', code);
   }
 
+  /** Order-independent: the same key for (a, b) and (b, a). */
+  private pairCooldownKey(a: string, b: string): string {
+    const [first, second] = [a, b].sort();
+    return this.redis.key('challenge', 'pair-cooldown', first, second);
+  }
+
   private challengeKey(id: string): string {
     return this.redis.key('challenge', id);
   }
@@ -751,6 +861,39 @@ if a.gameModeId ~= b.gameModeId then return 'LOBBY_DIFFERENT_MODE' end
 -- by this same atomic step (only the target must already be READY).
 if a.state ~= 'READY' and a.state ~= 'ONLINE' then return 'LOBBY_USER_BUSY' end
 if b.state ~= 'READY' then return 'CHALLENGE_TARGET_NOT_READY' end
+if redis.call('exists', KEYS[3]) == 1 or redis.call('exists', KEYS[4]) == 1 then return 'LOBBY_USER_BUSY' end
+local record = cjson.decode(ARGV[1])
+local ttl = tonumber(ARGV[4])
+a.state = 'CHALLENGED'
+b.state = 'CHALLENGED'
+redis.call('set', KEYS[3], ARGV[2], 'EX', ttl)
+redis.call('set', KEYS[4], ARGV[2], 'EX', ttl)
+redis.call('set', KEYS[5], ARGV[1], 'EX', ttl)
+redis.call('zrem', KEYS[6], record.challengerId, record.opponentId)
+redis.call('set', KEYS[1], cjson.encode(a), 'EX', tonumber(ARGV[5]))
+redis.call('set', KEYS[2], cjson.encode(b), 'EX', tonumber(ARGV[5]))
+redis.call('zadd', KEYS[7], ARGV[3], ARGV[2])
+return 'OK'`;
+
+// Automatic pairing: both players must still be READY at the same terms with
+// no open request; both are reserved and the record is stored as ACCEPTING in
+// one atomic step, so a manual request (RESERVE_SCRIPT needs the target READY
+// and unreserved) or another pairing racing it fails cleanly.
+// KEYS: ctxA ctxB resA resB challenge ready expires
+// ARGV: recordJson id expiresAtMs recordTtl ctxTtl defaultGoal
+const PAIR_SCRIPT = `
+local aCtx = redis.call('get', KEYS[1])
+local bCtx = redis.call('get', KEYS[2])
+if not aCtx or not bCtx then return 'LOBBY_NOT_JOINED' end
+local a = cjson.decode(aCtx)
+local b = cjson.decode(bCtx)
+if a.gameModeId ~= b.gameModeId then return 'LOBBY_DIFFERENT_MODE' end
+if a.state ~= 'READY' or b.state ~= 'READY' then return 'NOT_READY' end
+if a.autoMatch == false or b.autoMatch == false then return 'AUTO_MATCH_OFF' end
+local goal = tonumber(ARGV[6])
+local aGoal = tonumber(a.tokensToWin) or goal
+local bGoal = tonumber(b.tokensToWin) or goal
+if aGoal ~= bGoal then return 'DIFFERENT_TERMS' end
 if redis.call('exists', KEYS[3]) == 1 or redis.call('exists', KEYS[4]) == 1 then return 'LOBBY_USER_BUSY' end
 local record = cjson.decode(ARGV[1])
 local ttl = tonumber(ARGV[4])

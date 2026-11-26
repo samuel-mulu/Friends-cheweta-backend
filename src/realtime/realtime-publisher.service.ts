@@ -20,6 +20,7 @@ export const LUDO_EVENT_NAMES: Record<string, string> = {
   EXTRA_ROLL_GRANTED: 'ludo:extra_roll_granted',
   PLAYER_FINISHED: 'ludo:player_finished',
   PLAYER_RESIGNED: 'ludo:player_resigned',
+  CAPTURE_MISSED: 'ludo:capture_missed',
   MATCH_FINISHED: 'match:finished',
 };
 

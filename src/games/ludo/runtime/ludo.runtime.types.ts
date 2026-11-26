@@ -16,6 +16,12 @@ export enum LudoRuntimeEventType {
   EXTRA_ROLL_GRANTED = 'EXTRA_ROLL_GRANTED',
   PLAYER_FINISHED = 'PLAYER_FINISHED',
   PLAYER_RESIGNED = 'PLAYER_RESIGNED',
+  /**
+   * "Forget to send back and you lose": the player moved another token while
+   * a capture was possible, and is out (like a resignation). `tokenId` is the
+   * token they chose; `tokenIds` are their tokens retired to the yard.
+   */
+  CAPTURE_MISSED = 'CAPTURE_MISSED',
   MATCH_FINISHED = 'MATCH_FINISHED',
 }
 
@@ -28,7 +34,13 @@ export type StartingRollState = {
 export type LudoMatchRuntimeState = {
   game: LudoGameState;
   startingRoll: StartingRollState;
+  /** Players who are out without finishing: resigned, or forfeited (see below). */
   resignedPlayerIds: string[];
+  /**
+   * Of [resignedPlayerIds], those out because they missed a capture
+   * (LUDO_MISSED_CAPTURE_V1). Absent on states stored before it existed.
+   */
+  missedCapturePlayerIds?: string[];
 };
 
 export type LudoRuntimeEvent = {

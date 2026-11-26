@@ -15,9 +15,15 @@ import {
   InviteJoinDto,
 } from '../../challenge/dto/challenge.dto';
 import { ChatService } from '../../chat/chat.service';
-import { LobbyCommandDto, LobbyJoinDto, LobbyJoinGameDto } from '../../lobby/dto/lobby.dto';
+import {
+  LobbyCommandDto,
+  LobbyJoinDto,
+  LobbyJoinGameDto,
+  LobbyReadyDto,
+} from '../../lobby/dto/lobby.dto';
 import { LobbyRooms } from '../../lobby/lobby-rooms';
 import { LobbyService } from '../../lobby/lobby.service';
+import { LobbyMatchmakingService } from '../lobby-matchmaking.service';
 import { RealtimePublisherService } from '../realtime-publisher.service';
 import { AuthenticatedSocket } from '../realtime.types';
 import { WsAckExceptionFilter } from '../ws-ack-exception.filter';
@@ -35,6 +41,7 @@ export class LobbyGateway {
     private readonly chat: ChatService,
     private readonly publisher: RealtimePublisherService,
     private readonly rooms: LobbyRooms,
+    private readonly matchmaking: LobbyMatchmakingService,
   ) {}
 
   /**
@@ -133,14 +140,21 @@ export class LobbyGateway {
     }
   }
 
+  /** Ready with what the player wants (Ludo goal, auto-match); then try to pair them. */
   @SubscribeMessage('lobby:ready')
   async readyLobby(
     @ConnectedSocket() socket: AuthenticatedSocket,
-    @MessageBody() dto: LobbyCommandDto,
+    @MessageBody() dto: LobbyReadyDto,
   ): Promise<Ack> {
     try {
-      const result = await this.lobby.ready(requireUser(socket).id);
+      const userId = requireUser(socket).id;
+      const result = await this.lobby.ready(userId, {
+        tokensToWin: dto.tokensToWin,
+        autoMatch: dto.autoMatch,
+      });
       this.toLobby(result.gameModeId, 'lobby:player_ready', { player: result.player });
+      // After the ack and the broadcast: the match (if any) arrives as challenge:accepted.
+      setImmediate(() => void this.matchmaking.pair(userId));
       return { ok: true, commandId: dto.commandId };
     } catch (error) {
       return toErrorAck(error);
@@ -169,7 +183,7 @@ export class LobbyGateway {
     try {
       const user = requireUser(socket);
       const cancelled = await this.challenge.cancelForUser(user.id);
-      if (cancelled) this.publisher.publishChallengeTransition(cancelled);
+      if (cancelled) this.matchmaking.publish(cancelled);
       const result = await this.lobby.leave(user.id);
       if (result.gameModeId) {
         await socket.leave(this.publisher.lobbyRoom(result.gameModeId));
@@ -221,7 +235,7 @@ export class LobbyGateway {
         dto.challengeId,
         dto.commandId,
       );
-      if (!result.duplicate) this.publisher.publishChallengeTransition(result);
+      if (!result.duplicate) this.matchmaking.publish(result);
       return {
         ok: true,
         commandId: dto.commandId,
@@ -285,7 +299,7 @@ export class LobbyGateway {
         dto.code,
         dto.commandId,
       );
-      if (!result.duplicate) this.publisher.publishChallengeTransition(result);
+      if (!result.duplicate) this.matchmaking.publish(result);
       return {
         ok: true,
         commandId: dto.commandId,
@@ -318,7 +332,7 @@ export class LobbyGateway {
         dto.challengeId,
         dto.commandId,
       );
-      if (!result.duplicate) this.publisher.publishChallengeTransition(result);
+      if (!result.duplicate) this.matchmaking.publish(result);
       return { ok: true, commandId: dto.commandId, duplicate: result.duplicate };
     } catch (error) {
       return toErrorAck(error);
@@ -336,7 +350,7 @@ export class LobbyGateway {
         dto.challengeId,
         dto.commandId,
       );
-      if (!result.duplicate) this.publisher.publishChallengeTransition(result);
+      if (!result.duplicate) this.matchmaking.publish(result);
       return { ok: true, commandId: dto.commandId, duplicate: result.duplicate };
     } catch (error) {
       return toErrorAck(error);
@@ -350,7 +364,7 @@ export class LobbyGateway {
   /** A failed accept still changes the challenge: tell both players, then report the reason. */
   private acceptFailed(error: unknown): Ack {
     if (error instanceof ChallengeAcceptFailedError) {
-      this.publisher.publishChallengeTransition(error.transition);
+      this.matchmaking.publish(error.transition);
       return toErrorAck(error.reason);
     }
     return toErrorAck(error);

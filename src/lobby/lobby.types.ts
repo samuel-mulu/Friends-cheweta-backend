@@ -13,9 +13,22 @@ export const CUSTOM_STAKE_MAX_MINOR = 1_000_000;
  */
 export const CUSTOM_CODE_SUFFIX: Readonly<Record<string, string>> = {
   DAMA_ET_FORWARD_V1: 'FWD',
+  LUDO_NO_CAPTURE_V1: 'NOCAP',
+  LUDO_MISSED_CAPTURE_V1: 'MISS',
 };
 
-export type LobbyUserContext = {
+/** What a player asks for when they get ready (kept while READY or CHALLENGED). */
+export type LobbyReadyPrefs = {
+  /** Ludo "first to N home" (1-4) the player wants to play; other games: absent. */
+  tokensToWin?: number;
+  /** Start a match on its own with the next player ready at the same terms (default on). */
+  autoMatch?: boolean;
+};
+
+/** Ludo goal when the player did not say: all four home. */
+export const DEFAULT_TOKENS_TO_WIN = 4;
+
+export type LobbyUserContext = LobbyReadyPrefs & {
   gameModeId: string;
   /** The stake's amount, so player views can show it without a lookup. */
   stakeAmountMinor?: string;
@@ -24,7 +37,7 @@ export type LobbyUserContext = {
   readyAt?: string;
 };
 
-export type LobbyPlayerView = {
+export type LobbyPlayerView = LobbyReadyPrefs & {
   userId: string;
   displayName: string;
   /** The stake (game mode) the player sits at, and its amount. */

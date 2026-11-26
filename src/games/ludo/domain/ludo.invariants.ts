@@ -7,7 +7,7 @@ import {
   isSafeGlobalSquare,
   toGlobalTrackIndex,
 } from './ludo.board';
-import { LUDO_CLASSIC_V1, isLudoRulesVersion } from './ludo.rules';
+import { LUDO_CLASSIC_V1, isLudoRulesVersion, rulesFor } from './ludo.rules';
 import { isValidTokensToWin } from './ludo.state';
 import { LudoGameState, LudoTokenState } from './ludo.types';
 
@@ -50,9 +50,11 @@ export function assertValidLudoState(state: LudoGameState): void {
     }
   }
 
-  // Shared-track occupancy must be reachable under the classic rules.
-  // Different owners may coexist only on a safe square, and an opponent can
-  // never coexist with a same-owner blockade (2+ tokens), even on a safe square.
+  // Shared-track occupancy must be reachable under the match's rules. With
+  // captures, different owners may coexist only on a safe square; without
+  // captures, on any square. An opponent can never coexist with a same-owner
+  // blockade (2+ tokens), even on a safe square.
+  const captureEnabled = rulesFor(state.rulesVersion).captureEnabled;
   const occupancy = new Map<number, Map<string, number>>();
   for (const player of state.players) {
     for (const token of player.tokens) {
@@ -65,7 +67,7 @@ export function assertValidLudoState(state: LudoGameState): void {
   }
   for (const [square, owners] of occupancy) {
     if (owners.size <= 1) continue;
-    if (!isSafeGlobalSquare(square)) {
+    if (captureEnabled && !isSafeGlobalSquare(square)) {
       throw new Error(`Opposing tokens cannot coexist on non-safe square ${square}.`);
     }
     if ([...owners.values()].some((count) => count >= LUDO_CLASSIC_V1.blockadeMinTokens)) {

@@ -34,7 +34,8 @@ export function decideBotAction(
   if (game.turnPhase === LudoTurnPhase.WAITING_FOR_ROLL)
     return { playerId: game.currentPlayerId, type: 'ROLL_DICE' };
   if (game.turnPhase === LudoTurnPhase.WAITING_FOR_MOVE && game.diceValue !== null) {
-    const legal = engine.getLegalMoves(game, game.currentPlayerId, game.diceValue);
+    // Bots follow the match's rules: they never forfeit by skipping a capture.
+    const legal = engine.getChoosableMoves(game, game.currentPlayerId, game.diceValue);
     if (legal.length === 0) return null;
     const choice = practiceBot(level, game.version + 1).chooseMove(
       game,

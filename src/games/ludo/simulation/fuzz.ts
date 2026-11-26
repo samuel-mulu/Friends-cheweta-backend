@@ -1,3 +1,4 @@
+import { LUDO_RULES_VERSIONS } from '../domain';
 import { AggressiveBot, DefensiveBot, FastBot, LudoBot, MixedBot, RandomBot } from './bots';
 import { replayLudoSimulation, simulateLudoMatch } from './ludo.simulator';
 
@@ -31,7 +32,8 @@ for (let index = 0; index < count; index += 1) {
     seed: `fuzz-dice-${playerCount}-${index}`,
     maxCommands: 50_000,
     // Alternate rule sets and goals so every combination stays fuzzed.
-    rulesVersion: (['LUDO_CLASSIC_V1', 'LUDO_CLASSIC_V2', 'LUDO_CLASSIC_V3'] as const)[index % 3],
+    // Every rules version (including the no-capture and missed-capture types).
+    rulesVersion: LUDO_RULES_VERSIONS[index % LUDO_RULES_VERSIONS.length],
     tokensToWin: 1 + (Math.floor(index / 6) % 4),
   });
 
