@@ -21,6 +21,7 @@ import { GameEntryModule } from './game-entry/game-entry.module';
 import { LobbyModule } from './lobby/lobby.module';
 import { MatchCreationModule } from './match-creation/match-creation.module';
 import { SettlementModule } from './settlement/settlement.module';
+import { CommunicationsModule } from './communications/communications.module';
 import { PaymentsModule } from './payments/payments.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { RedisModule } from './redis/redis.module';
@@ -44,6 +45,7 @@ import { WalletModule } from './wallet/wallet.module';
     RiskModule,
     AuditModule,
     PaymentsModule,
+    CommunicationsModule,
     GamingModule,
     LobbyModule,
     MatchCreationModule,

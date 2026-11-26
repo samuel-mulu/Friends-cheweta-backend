@@ -60,6 +60,7 @@ export class LobbyGateway {
         dto.gameCode,
         dto.gameModeId,
         dto.customStakeMinor,
+        dto.rulesVersion,
       );
       if (result.changed) {
         if (result.previousGameModeId && result.previousGameModeId !== result.gameModeId) {

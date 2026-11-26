@@ -1,4 +1,11 @@
-import { DAMA_DRAW_PLIES, DamaCell, DamaPhase, boardFrom } from '../domain';
+import {
+  DAMA_DRAW_PLIES,
+  DAMA_ET_FORWARD_V1,
+  DAMA_ET_V1,
+  DamaCell,
+  DamaPhase,
+  boardFrom,
+} from '../domain';
 import { DamaMatchRuntimeState, DamaRuntimeEventType } from './dama.runtime.types';
 import { createDamaMatch, currentLegalMoves, executeDamaCommand } from './dama.match-runtime';
 
@@ -23,6 +30,22 @@ const move = (state: DamaMatchRuntimeState, playerId: string, path: string[], co
   });
 
 describe('Dama match runtime', () => {
+  it('keeps the mode rules: ታንከኛ by default, እግረኛ when asked', () => {
+    expect(createDamaMatch('m1', 'light', 'dark').game.rulesVersion).toBe(DAMA_ET_V1);
+    const egregna = createDamaMatch('m1', 'light', 'dark', DAMA_ET_FORWARD_V1);
+    expect(egregna.game.rulesVersion).toBe(DAMA_ET_FORWARD_V1);
+
+    // A man behind an enemy: ታንከኛ must capture backwards, እግረኛ may not.
+    const pieces = { e5: 'l', d4: 'd', a7: 'd' } as const;
+    expect(currentLegalMoves(position(pieces))).toEqual([
+      { path: [sq('e5'), sq('c3')], captured: [sq('d4')] },
+    ]);
+    const forward = position(pieces, { rulesVersion: DAMA_ET_FORWARD_V1 });
+    expect(currentLegalMoves(forward).every((m) => m.captured.length === 0)).toBe(true);
+    expect(() => move(forward, 'light', ['e5', 'c3'])).toThrow('ILLEGAL_DAMA_MOVE');
+    expect(move(forward, 'light', ['e5', 'f6']).state.game.rulesVersion).toBe(DAMA_ET_FORWARD_V1);
+  });
+
   it('Light moves first, then the turn passes with the reply moves', () => {
     const start = createDamaMatch('m1', 'light', 'dark');
     expect(start.game.currentPlayerId).toBe('light');

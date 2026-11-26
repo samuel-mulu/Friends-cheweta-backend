@@ -2,6 +2,22 @@
 
 Production-minded **modular monolith** for Friends Game Hub. Ludo is the first game. The backend is intentionally designed so future games can reuse identity, wallet, payments, matchmaking/entry concepts, notifications, audit and administration without forcing Keno/Aviator-style games into the Ludo engine.
 
+## Deposits, withdrawals, and GeezSMS rollout
+
+Set Cheweta's settlement accounts, a unique six-digit `DEPOSIT_APPROVAL_PIN`, and GeezSMS credentials using the production environment template. Set `GEEZSMS_ENABLED=true` after testing SMS delivery. For delivery callbacks, use the Cheweta URL ending in `/api/sms/geezsms/callback` and a dedicated callback secret. Suppress query strings in proxy access logs for that route. Withdrawal SMS alerts go to the comma-separated `WITHDRAWAL_ADMIN_SMS_PHONES` when configured.
+
+Apply the migrations, deploy the backend and admin, and release the updated Flutter app for OTP registration and password-confirmed withdrawals. The migration starts CBE and Telebirr in Manual. The admin can rotate the approval PIN in **Finance → Deposit configuration**. Earlier approved withdrawals appear as legacy approvals and are already settled in the ledger.
+
+Use Cheweta's Verify.ET key for Automatic. For Telebirr Local, run `npm run telebirr:verifier` on a network that can reach the official receipt service. The verifier listens on `PORT` (default 8090). Serve its `/receipt` endpoint behind HTTPS and configure the same verifier token (at least 32 characters) on both services. Test a known receipt and the Verify.ET flow in staging before enabling Local with Automatic Fallback. The admin can return Telebirr to Local immediately. On a provider outage, admins can switch to Manual for new submissions.
+
+The workflow integration suite uses fake provider responses and real PostgreSQL. With Redis on localhost and a migrated disposable local database named `cheweta_workflow_test`, set `CHEWETA_WORKFLOWS_TEST_DATABASE_URL` and run `npm run test:e2e -- --runInBand`.
+
+## Player announcements and feedback
+
+Apply the Prisma migration before deploying the backend. Release the updated Flutter app before publishing a forced notice. Admins can publish notices under **Broadcasts**, triage player reports under **Feedback**, and start a private message from a player profile. Players use **Messages** in Cheweta.
+
+To verify the API and Socket.IO events locally, start PostgreSQL and Redis. Apply the migrations to a disposable local database named `cheweta_communications_test`, set `CHEWETA_COMMUNICATIONS_TEST_DATABASE_URL`, and run `npm run test:e2e -- --runInBand test/cheweta-communications.e2e-spec.ts`.
+
 ## Stack
 
 - NestJS + TypeScript

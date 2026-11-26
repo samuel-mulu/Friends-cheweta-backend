@@ -1,4 +1,4 @@
-# Ethiopian Dama (ዳማ) — rules version `DAMA_ET_V1`
+# Ethiopian Dama (ዳማ) — rules versions `DAMA_ET_V1` (ታንከኛ) and `DAMA_ET_FORWARD_V1` (እግረኛ)
 
 The server is authoritative: clients only ever send a move path, and the server
 accepts it only if it is one of the legal moves below.
@@ -18,6 +18,20 @@ accepts it only if it is one of the legal moves below.
 | Win | the opponent has no pieces, or no legal move (being blocked is a loss), or resigns. |
 | Draw | 40 consecutive plies (20 each) with no capture and no man moving. Stakes are refunded. |
 | Timer | per move (game mode setting). A timeout plays a legal move for the player and adds a strike; 3 strikes forfeit. |
+
+## Types (rules versions)
+
+Each game mode (stake) picks one; a match plays its mode's rules.
+
+| Type | Rules version | Men capture | Kings |
+|---|---|---|---|
+| ታንከኛ (tankegna) | `DAMA_ET_V1` | forward **and backward** (table above) | fly, all directions |
+| እግረኛ (egregna) | `DAMA_ET_FORWARD_V1` | **forward only**, every jump of a multi-capture too | unchanged: fly, all directions |
+
+Everything else (compulsory maximum capture, promotion, draw rule, timer) is
+the same. Under እግረኛ a man with only a backward jump available has no capture,
+so it moves normally. Custom lobby stakes are per type (`DAMA_CUSTOM_<amt>`
+for ታንከኛ, `DAMA_CUSTOM_<amt>_FWD` for እግረኛ); practice takes the type too.
 
 "Huffing" (blowing away a piece that failed to capture) does not apply online:
 illegal moves are impossible and the app highlights pieces that must capture.

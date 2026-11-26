@@ -3,6 +3,7 @@ import {
   DamaColor,
   DamaGameState,
   DamaMove,
+  DamaRulesVersion,
   colorOf,
   isKing,
   opponentOf,
@@ -83,7 +84,14 @@ export class MinimaxDamaBot implements DamaBot {
     let choices: DamaMove[] = [];
     for (const move of moves) {
       const after = applyMove(game.board, move).board;
-      const score = -this.search(after, opponentOf(color), this.depth - 1, -Infinity, -best + 1);
+      const score = -this.search(
+        after,
+        opponentOf(color),
+        this.depth - 1,
+        -Infinity,
+        -best + 1,
+        game.rulesVersion,
+      );
       if (score > best) {
         best = score;
         choices = [move];
@@ -100,8 +108,9 @@ export class MinimaxDamaBot implements DamaBot {
     depth: number,
     alpha: number,
     beta: number,
+    rules: DamaRulesVersion,
   ): number {
-    const moves = legalMoves(board, color);
+    const moves = legalMoves(board, color, rules);
     if (moves.length === 0) return -WIN - depth; // blocked or no pieces: lost (prefer faster wins)
     if (depth <= 0) return evaluateBoard(board, color);
     let best = -Infinity;
@@ -112,6 +121,7 @@ export class MinimaxDamaBot implements DamaBot {
         depth - 1,
         -beta,
         -alpha,
+        rules,
       );
       if (score > best) best = score;
       if (best > alpha) alpha = best;

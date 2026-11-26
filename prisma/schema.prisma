@@ -37,6 +37,30 @@ enum PaymentStatus {
   PENDING
   APPROVED
   REJECTED
+  PAID
+}
+
+enum DepositApprovalMode {
+  MANUAL
+  AUTOMATIC
+  LOCAL
+  LOCAL_WITH_FALLBACK
+}
+
+enum DepositVerificationStatus {
+  READY
+  VERIFYING
+  AWAITING_PROVIDER
+  UNAVAILABLE
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  EXPIRED
+}
+
+enum OtpPurpose {
+  REGISTER
+  PASSWORD_RESET
 }
 
 enum PaymentChannel {
@@ -44,6 +68,8 @@ enum PaymentChannel {
   TELEBIRR
   MANUAL
   OTHER
+  AWASH
+  BOA
 }
 
 enum MatchEntryStatus {
@@ -104,6 +130,10 @@ model User {
   matchParticipants MatchParticipant[]
   matchEntries      MatchEntry[]
   notifications     Notification[]
+  broadcasts        AdminBroadcast[] @relation("BroadcastAuthor")
+  broadcastDismissals BroadcastDismissal[]
+  feedback          PlayerFeedback[] @relation("PlayerFeedbackOwner")
+  feedbackReplies   PlayerFeedback[] @relation("PlayerFeedbackResponder")
   riskFlags         RiskFlag[]
   auditActions      AuditLog[]
   directMessagesSent     DirectMessage[] @relation("DirectMessagesSent")
@@ -172,7 +202,14 @@ model Deposit {
   userId               String
   amountMinor          BigInt
   channel              PaymentChannel
-  transactionReference String         @unique
+  transactionReference String
+  referenceKey         String?        @unique
+  approvalMode         DepositApprovalMode?
+  verificationStatus   DepositVerificationStatus?
+  providerRequestId    String?
+  attemptExpiresAt     DateTime?
+  nextCheckAt          DateTime?
+  lastVerificationCode String?
   status               PaymentStatus  @default(PENDING)
   idempotencyKey       String         @unique
   note                 String?
@@ -186,6 +223,7 @@ model Deposit {
 
   @@index([userId, createdAt])
   @@index([status, createdAt])
+  @@index([channel, transactionReference])
 }
 
 model Withdrawal {
@@ -200,6 +238,8 @@ model Withdrawal {
   reviewedByUserId String?
   reviewedAt       DateTime?
   rejectionReason  String?
+  payoutTransactionUrl String?
+  paidAt           DateTime?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
@@ -207,6 +247,54 @@ model Withdrawal {
 
   @@index([userId, createdAt])
   @@index([status, createdAt])
+}
+
+model DepositProviderConfig {
+  channel                 PaymentChannel      @id
+  enabled                 Boolean
+  approvalMode            DepositApprovalMode @default(MANUAL)
+  fallbackThreshold       Int                 @default(2)
+  fallbackWindowMinutes   Int                 @default(3)
+  fallbackDurationMinutes Int                 @default(30)
+  fallbackUntil           DateTime?
+  fallbackReason          String?
+  updatedAt               DateTime            @updatedAt
+}
+
+model DepositLookupFailure {
+  id           String   @id @default(uuid())
+  referenceKey String
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model DepositApprovalPin {
+  id        Int      @id
+  hash      String
+  updatedAt DateTime @updatedAt
+}
+
+model OtpChallenge {
+  id          String     @id @default(uuid())
+  phoneNumber String
+  purpose     OtpPurpose
+  requestIp   String?
+  codeHash    String?
+  attempts    Int        @default(0)
+  createdAt   DateTime   @default(now())
+  expiresAt   DateTime
+  consumedAt  DateTime?
+
+  @@index([phoneNumber, purpose, createdAt])
+  @@index([requestIp, createdAt])
+}
+
+model SmsDeliveryLog {
+  id         String   @id @default(uuid())
+  providerId String?
+  status     String
+  createdAt  DateTime @default(now())
 }
 
 model Game {
@@ -365,6 +453,79 @@ model MatchCheckpoint {
   updatedAt DateTime @updatedAt
 
   match Match @relation(fields: [matchId], references: [id], onDelete: Restrict)
+}
+
+enum BroadcastKind {
+  DISMISSIBLE
+  PERSISTENT
+  FORCED
+}
+
+enum FeedbackCategory {
+  FEEDBACK
+  COMPLAINT
+  ADVICE
+  OTHER
+}
+
+enum FeedbackStatus {
+  OPEN
+  REPLIED
+  CLOSED
+}
+
+model AdminBroadcast {
+  id        String        @id @default(uuid())
+  title     String
+  body      String
+  category  BroadcastKind @default(DISMISSIBLE)
+  forcedLive Boolean      @default(false)
+  revision  Int           @default(1)
+  createdById String?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  deletedAt DateTime?
+
+  createdBy User? @relation("BroadcastAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+  dismissals BroadcastDismissal[]
+
+  @@index([deletedAt, category, createdAt, id])
+}
+
+model BroadcastDismissal {
+  broadcastId String
+  userId      String
+  createdAt   DateTime @default(now())
+
+  broadcast AdminBroadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([broadcastId, userId])
+  @@index([userId])
+}
+
+model PlayerFeedback {
+  id          String           @id @default(uuid())
+  userId      String
+  category    FeedbackCategory
+  message     String?
+  requestId   String?
+  status      FeedbackStatus   @default(OPEN)
+  adminReply  String?
+  repliedById String?
+  repliedAt   DateTime?
+  replyCursor BigInt?
+  playerSeenAt DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  user User @relation("PlayerFeedbackOwner", fields: [userId], references: [id], onDelete: Cascade)
+  repliedBy User? @relation("PlayerFeedbackResponder", fields: [repliedById], references: [id], onDelete: SetNull)
+
+  @@unique([userId, requestId])
+  @@index([status, createdAt, id])
+  @@index([userId, createdAt, id])
+  @@index([userId, replyCursor])
 }
 
 model Notification {

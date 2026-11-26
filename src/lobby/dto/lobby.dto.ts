@@ -26,6 +26,14 @@ export class LobbyJoinGameDto {
   @Min(1)
   @Max(100_000_000)
   customStakeMinor?: number;
+
+  /**
+   * With `customStakeMinor`: the rules of the custom stake (e.g. Dama ታንከኛ
+   * `DAMA_ET_V1` or እግረኛ `DAMA_ET_FORWARD_V1`). Default: the smallest stake's.
+   */
+  @IsOptional()
+  @Matches(/^[A-Z0-9_]{2,40}$/)
+  rulesVersion?: string;
 }
 
 export class LobbyCommandDto {

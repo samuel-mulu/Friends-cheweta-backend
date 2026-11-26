@@ -81,10 +81,45 @@ export async function seedCatalog(prisma: PrismaClient): Promise<{ bots: number 
       description: 'Ethiopian Dama (ዳማ): flying kings, compulsory maximum capture.',
     },
   });
+  // ታንከኛ (DAMA_ET_V1: men capture forward and backward) and
+  // እግረኛ (DAMA_ET_FORWARD_V1: men capture forward only), same stakes.
   const damaModes = [
-    { code: 'DAMA_1V1_10', name: 'Dama 1v1 - 10 ETB', stakeAmountMinor: 1000n },
-    { code: 'DAMA_1V1_20', name: 'Dama 1v1 - 20 ETB', stakeAmountMinor: 2000n },
-    { code: 'DAMA_1V1_50', name: 'Dama 1v1 - 50 ETB', stakeAmountMinor: 5000n },
+    {
+      code: 'DAMA_1V1_10',
+      name: 'Dama 1v1 - 10 ETB',
+      stakeAmountMinor: 1000n,
+      rules: 'DAMA_ET_V1',
+    },
+    {
+      code: 'DAMA_1V1_20',
+      name: 'Dama 1v1 - 20 ETB',
+      stakeAmountMinor: 2000n,
+      rules: 'DAMA_ET_V1',
+    },
+    {
+      code: 'DAMA_1V1_50',
+      name: 'Dama 1v1 - 50 ETB',
+      stakeAmountMinor: 5000n,
+      rules: 'DAMA_ET_V1',
+    },
+    {
+      code: 'DAMA_FWD_1V1_10',
+      name: 'Dama እግረኛ 1v1 - 10 ETB',
+      stakeAmountMinor: 1000n,
+      rules: 'DAMA_ET_FORWARD_V1',
+    },
+    {
+      code: 'DAMA_FWD_1V1_20',
+      name: 'Dama እግረኛ 1v1 - 20 ETB',
+      stakeAmountMinor: 2000n,
+      rules: 'DAMA_ET_FORWARD_V1',
+    },
+    {
+      code: 'DAMA_FWD_1V1_50',
+      name: 'Dama እግረኛ 1v1 - 50 ETB',
+      stakeAmountMinor: 5000n,
+      rules: 'DAMA_ET_FORWARD_V1',
+    },
   ];
   for (const mode of damaModes) {
     const data = {
@@ -94,7 +129,7 @@ export async function seedCatalog(prisma: PrismaClient): Promise<{ bots: number 
       stakeAmountMinor: mode.stakeAmountMinor,
       platformFeeBps: 0,
       turnDurationSeconds: 40,
-      rulesVersion: 'DAMA_ET_V1',
+      rulesVersion: mode.rules,
       enabled: true,
     };
     await prisma.gameMode.upsert({

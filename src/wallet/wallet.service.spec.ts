@@ -28,7 +28,7 @@ type FakeLedgerRow = {
 };
 
 /**
- * Minimal in-memory fake standing in for Prisma. `wallet.updateMany` is the
+ * Minimal in-memory fake standing in for Prisma. `wallet.updateManyAndReturn` is the
  * only place that performs the guarded, atomic check-and-mutate - exactly
  * like the real `WHERE availableBalance/lockedBalance >= amount` guarded
  * update in Postgres - so it always evaluates against the *current* live
@@ -72,7 +72,7 @@ class FakeWalletStore {
         findUnique: async ({ where }: any) => {
           store.count('wallet.findUnique');
           // Return a snapshot copy, like a real Postgres row - never a live
-          // reference the later `updateMany` could mutate out from under us.
+          // reference the later `updateManyAndReturn` could mutate out from under us.
           const row = where.userId
             ? [...store.wallets.values()].find((w) => w.userId === where.userId)
             : where.id
@@ -80,27 +80,27 @@ class FakeWalletStore {
               : undefined;
           return row ? { ...row } : null;
         },
-        updateMany: async ({ where, data }: any) => {
-          store.count('wallet.updateMany');
+        updateManyAndReturn: async ({ where, data }: any) => {
+          store.count('wallet.updateManyAndReturn');
           const wallet = store.wallets.get(where.id);
-          if (!wallet) return { count: 0 };
+          if (!wallet) return [];
           if (
             where.availableBalance?.gte !== undefined &&
             wallet.availableBalance < where.availableBalance.gte
           ) {
-            return { count: 0 };
+            return [];
           }
           if (
             where.lockedBalance?.gte !== undefined &&
             wallet.lockedBalance < where.lockedBalance.gte
           ) {
-            return { count: 0 };
+            return [];
           }
           if (data.availableBalance?.increment !== undefined)
             wallet.availableBalance += data.availableBalance.increment;
           if (data.lockedBalance?.increment !== undefined)
             wallet.lockedBalance += data.lockedBalance.increment;
-          return { count: 1 };
+          return [{ ...wallet }];
         },
       },
       $transaction: async (fn: (tx: any) => Promise<unknown>) => fn(store.client()),
@@ -149,7 +149,7 @@ describe('WalletService.mutateWithClient (DB2)', () => {
 
     expect(store.queryCounts.get('walletTransaction.findUnique')).toBe(1);
     expect(store.queryCounts.get('wallet.findUnique')).toBe(1);
-    expect(store.queryCounts.get('wallet.updateMany')).toBe(1);
+    expect(store.queryCounts.get('wallet.updateManyAndReturn')).toBe(1);
     expect(store.queryCounts.get('walletTransaction.create')).toBe(1);
     const totalQueries = [...store.queryCounts.values()].reduce((sum, n) => sum + n, 0);
     expect(totalQueries).toBe(4);
@@ -273,7 +273,7 @@ describe('WalletService.mutateWithClient (DB2)', () => {
     expect(store.wallets.get('wallet-user-1')!.availableBalance).toBe(150n);
     expect(store.ledgerByIdempotencyKey.size).toBe(1);
     // Second call short-circuits on the idempotency lookup alone - no second guarded update.
-    expect(store.queryCounts.get('wallet.updateMany')).toBe(1);
+    expect(store.queryCounts.get('wallet.updateManyAndReturn')).toBe(1);
   });
 
   it('concurrent debit: only the operation(s) the balance can cover succeed, wallet never goes negative', async () => {

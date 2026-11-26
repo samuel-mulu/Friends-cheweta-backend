@@ -7,23 +7,24 @@ import { PrismaService } from '../prisma/prisma.service';
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async createPlayerWithWallet(input: {
-    fullName: string;
-    phoneNumber: string;
-    passwordHash: string;
-  }) {
+  async createPlayerWithWallet(
+    input: {
+      fullName: string;
+      phoneNumber: string;
+      passwordHash: string;
+    },
+    tx: Prisma.TransactionClient = this.prisma,
+  ) {
     try {
-      return await this.prisma.$transaction(async (tx) => {
-        return tx.user.create({
-          data: {
-            fullName: input.fullName,
-            phoneNumber: input.phoneNumber,
-            passwordHash: input.passwordHash,
-            role: UserRole.PLAYER,
-            wallet: { create: {} },
-          },
-          include: { wallet: true },
-        });
+      return await tx.user.create({
+        data: {
+          fullName: input.fullName,
+          phoneNumber: input.phoneNumber,
+          passwordHash: input.passwordHash,
+          role: UserRole.PLAYER,
+          wallet: { create: {} },
+        },
+        include: { wallet: true },
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {

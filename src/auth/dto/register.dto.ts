@@ -1,4 +1,4 @@
-import { IsString, Length, MaxLength, MinLength } from 'class-validator';
+import { IsString, Length, Matches, MaxLength, MinLength } from 'class-validator';
 
 export class RegisterDto {
   @IsString()
@@ -13,6 +13,12 @@ export class RegisterDto {
   @MinLength(8)
   @MaxLength(72)
   password!: string;
+
+  @IsString()
+  @Matches(/^\d{4}$/, {
+    message: 'Enter the four-digit SMS code. Update the app if you cannot enter a code.',
+  })
+  otp!: string;
 
   @IsString()
   @MaxLength(120)

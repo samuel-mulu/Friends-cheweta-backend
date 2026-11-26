@@ -104,6 +104,6 @@ import { GameRegistry } from './turn-game/game-registry';
     DisconnectGraceService,
     RealtimeMaintenanceService,
   ],
-  exports: [LudoRuntimeService, GameRegistry],
+  exports: [LudoRuntimeService, GameRegistry, RealtimePublisherService],
 })
 export class RealtimeModule {}

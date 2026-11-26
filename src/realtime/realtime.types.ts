@@ -13,6 +13,7 @@ export type RealtimeUser = {
   phoneNumber: string;
   role: UserRole;
   status: UserStatus;
+  isBot?: boolean;
 };
 
 export type SocketData = {

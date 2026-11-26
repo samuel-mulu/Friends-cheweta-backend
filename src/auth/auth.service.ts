@@ -1,16 +1,25 @@
-import { Injectable, InternalServerErrorException, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  InternalServerErrorException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { compare, hash } from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import { AppEnv } from '../config/env';
-import { UserRole, UserStatus } from '../generated/prisma/enums';
+import { Prisma } from '../generated/prisma/client';
+import { OtpPurpose, UserRole, UserStatus } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import { normalizeEthiopianPhone } from '../common/utils/phone.util';
 import { sha256 } from '../common/utils/hash.util';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { ChangePasswordDto, ResetPasswordDto } from './dto/password-recovery.dto';
+import { OtpService } from './otp.service';
 import { AccessTokenPayload, RefreshTokenPayload } from './types/jwt-payload.type';
 
 @Injectable()
@@ -20,16 +29,23 @@ export class AuthService {
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService<AppEnv, true>,
+    private readonly otp: OtpService,
   ) {}
 
   async register(dto: RegisterDto, ipAddress?: string) {
     const phoneNumber = normalizeEthiopianPhone(dto.phoneNumber);
+    const challengeId = await this.otp.verify(phoneNumber, OtpPurpose.REGISTER, dto.otp);
     const passwordHash = await hash(dto.password, 12);
-
-    const user = await this.usersService.createPlayerWithWallet({
-      fullName: dto.fullName.trim(),
-      phoneNumber,
-      passwordHash,
+    const user = await this.prisma.$transaction(async (tx) => {
+      await this.otp.consume(tx, challengeId);
+      return this.usersService.createPlayerWithWallet(
+        {
+          fullName: dto.fullName.trim(),
+          phoneNumber,
+          passwordHash,
+        },
+        tx,
+      );
     });
 
     const tokens = await this.createSessionTokens({
@@ -43,6 +59,109 @@ export class AuthService {
       ...tokens,
       user: this.publicUser(user),
     };
+  }
+
+  async requestRegisterOtp(input: string, requestIp?: string) {
+    const phoneNumber = normalizeEthiopianPhone(input);
+    if (await this.usersService.findByPhone(phoneNumber)) {
+      throw new ConflictException({
+        code: 'PHONE_ALREADY_REGISTERED',
+        message: 'An account already exists with this phone number.',
+      });
+    }
+    await this.otp.request(phoneNumber, OtpPurpose.REGISTER, requestIp, true);
+    return { message: 'SMS code sent.', resendAfterSeconds: 30 };
+  }
+
+  async requestResetOtp(input: string, requestIp?: string) {
+    const phoneNumber = normalizeEthiopianPhone(input);
+    const user = await this.usersService.findByPhone(phoneNumber);
+    await this.otp.request(
+      phoneNumber,
+      OtpPurpose.PASSWORD_RESET,
+      requestIp,
+      user?.role === UserRole.PLAYER && user.status === UserStatus.ACTIVE && !user.isBot,
+    );
+    return {
+      message: 'If this number is eligible, a reset code will arrive by SMS.',
+      resendAfterSeconds: 30,
+    };
+  }
+
+  async resetPassword(dto: ResetPasswordDto) {
+    const phoneNumber = normalizeEthiopianPhone(dto.phoneNumber);
+    const challengeId = await this.otp.verify(phoneNumber, OtpPurpose.PASSWORD_RESET, dto.otp);
+    const passwordHash = await hash(dto.newPassword, 12);
+    await this.prisma.$transaction(async (tx) => {
+      await this.otp.consume(tx, challengeId);
+      const user = await tx.user.findUnique({ where: { phoneNumber } });
+      if (!user) throw new UnauthorizedException('Invalid or expired code.');
+      const changed = await tx.user.updateMany({
+        where: { id: user.id, role: UserRole.PLAYER, status: UserStatus.ACTIVE, isBot: false },
+        data: { passwordHash },
+      });
+      if (changed.count !== 1) throw new UnauthorizedException('Invalid or expired code.');
+      await tx.userSession.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+    });
+    return { message: 'Password reset. Sign in with your new password.' };
+  }
+
+  async verifyPassword(userId: string, password: string) {
+    const user = await this.usersService.findById(userId);
+    if (
+      !user ||
+      user.status !== UserStatus.ACTIVE ||
+      !(await compare(password, user.passwordHash))
+    ) {
+      throw new ForbiddenException({
+        code: 'INCORRECT_PASSWORD',
+        message: 'The account password is incorrect.',
+      });
+    }
+    return user.passwordHash;
+  }
+
+  async assertCurrentCredential(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    passwordHash: string,
+  ) {
+    const rows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM "User"
+      WHERE id = ${userId} AND "passwordHash" = ${passwordHash} AND status = 'ACTIVE'
+      FOR UPDATE
+    `;
+    if (!rows.length) {
+      throw new ForbiddenException({
+        code: 'PASSWORD_CHANGED',
+        message: 'The account password has changed. Sign in again.',
+      });
+    }
+  }
+
+  async changePassword(userId: string, dto: ChangePasswordDto) {
+    const current = await this.verifyPassword(userId, dto.currentPassword);
+    const passwordHash = await hash(dto.newPassword, 12);
+    await this.prisma.$transaction(async (tx) => {
+      const changed = await tx.user.updateMany({
+        where: { id: userId, passwordHash: current, status: UserStatus.ACTIVE },
+        data: { passwordHash },
+      });
+      if (changed.count !== 1) {
+        throw new ConflictException({
+          code: 'PASSWORD_CHANGED',
+          message: 'Your password has already changed. Sign in again.',
+        });
+      }
+      await tx.userSession.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+    });
+    return { message: 'Password changed. Sign in with your new password.' };
   }
 
   async login(dto: LoginDto, ipAddress?: string) {
@@ -65,6 +184,7 @@ export class AuthService {
       role: user.role,
       deviceName: dto.deviceName,
       ipAddress,
+      passwordHash: user.passwordHash,
     });
 
     return { ...tokens, user: this.publicUser(user) };
@@ -144,7 +264,7 @@ export class AuthService {
       });
     }
 
-    return this.publicUser(user);
+    return { ...this.publicUser(user), isBot: user.isBot };
   }
 
   async logout(refreshToken: string): Promise<{ success: true }> {
@@ -172,22 +292,31 @@ export class AuthService {
     role: UserRole;
     deviceName?: string;
     ipAddress?: string;
+    passwordHash?: string;
   }) {
     const sessionId = randomUUID();
     const refreshToken = await this.signRefreshToken(input.userId, sessionId);
 
+    const data = {
+      id: sessionId,
+      userId: input.userId,
+      refreshTokenHash: sha256(refreshToken),
+      deviceName: input.deviceName,
+      ipAddress: input.ipAddress,
+      expiresAt: this.refreshExpiresAt(),
+    };
     try {
-      await this.prisma.userSession.create({
-        data: {
-          id: sessionId,
-          userId: input.userId,
-          refreshTokenHash: sha256(refreshToken),
-          deviceName: input.deviceName,
-          ipAddress: input.ipAddress,
-          expiresAt: this.refreshExpiresAt(),
-        },
-      });
-    } catch {
+      const passwordHash = input.passwordHash;
+      if (passwordHash) {
+        await this.prisma.$transaction(async (tx) => {
+          await this.assertCurrentCredential(tx, input.userId, passwordHash);
+          await tx.userSession.create({ data });
+        });
+      } else {
+        await this.prisma.userSession.create({ data });
+      }
+    } catch (error) {
+      if (error instanceof ForbiddenException) throw error;
       throw new InternalServerErrorException({
         code: 'SESSION_CREATE_FAILED',
         message: 'Could not create a login session. Please try again.',

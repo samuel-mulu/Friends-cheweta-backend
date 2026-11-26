@@ -12,7 +12,7 @@ import { SOCKET_EVENTS_PER_SECOND } from '../../common/rate-limit';
 import { LobbyService } from '../../lobby/lobby.service';
 import { PresenceService } from '../presence.service';
 import { RealtimeAuthService } from '../realtime-auth.service';
-import { RealtimePublisherService } from '../realtime-publisher.service';
+import { PLAYER_COMMUNICATIONS_ROOM, RealtimePublisherService } from '../realtime-publisher.service';
 import { AuthenticatedSocket, REALTIME_PROTOCOL_VERSION } from '../realtime.types';
 import { DisconnectGraceService } from '../timeout/disconnect-grace.service';
 import { toErrorPayload } from '../ws-errors';
@@ -47,6 +47,7 @@ export class ConnectionGateway implements OnGatewayInit, OnGatewayConnection, On
       const user = await this.auth.authenticate(socket);
       socket.data.user = user;
       await socket.join(this.publisher.userRoom(user.id));
+      if (user.role === 'PLAYER' && !user.isBot) await socket.join(PLAYER_COMMUNICATIONS_ROOM);
       await this.presence.connected(user.id, socket.id);
       await this.disconnects.onConnected(user.id);
       socket.data.presenceTimer = setInterval(() => {

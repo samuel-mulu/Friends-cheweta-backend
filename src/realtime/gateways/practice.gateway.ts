@@ -32,6 +32,7 @@ export class PracticeGateway {
         dto.commandId,
         dto.tokensToWin,
         dto.game,
+        dto.rulesVersion,
       );
       return { ok: true, commandId: dto.commandId, data };
     } catch (error) {

@@ -6,4 +6,5 @@ export interface AuthenticatedUser {
   phoneNumber: string;
   role: UserRole;
   status: UserStatus;
+  isBot?: boolean;
 }

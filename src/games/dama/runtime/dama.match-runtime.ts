@@ -6,6 +6,7 @@ import {
   DamaGameState,
   DamaMove,
   DamaPhase,
+  DamaRulesVersion,
   assertValidDamaState,
   countPieces,
   initialBoard,
@@ -23,15 +24,19 @@ import {
   DamaRuntimeResult,
 } from './dama.runtime.types';
 
-/** A new match: `lightUserId` moves first. Color assignment is the caller's choice. */
+/**
+ * A new match: `lightUserId` moves first. Color assignment is the caller's
+ * choice; `rulesVersion` comes from the game mode (ታንከኛ by default).
+ */
 export function createDamaMatch(
   matchId: string,
   lightUserId: string,
   darkUserId: string,
+  rulesVersion: DamaRulesVersion = DAMA_ET_V1,
 ): DamaMatchRuntimeState {
   const game: DamaGameState = {
     matchId,
-    rulesVersion: DAMA_ET_V1,
+    rulesVersion,
     version: 0,
     phase: DamaPhase.PLAYING,
     players: [
@@ -61,7 +66,7 @@ export function colorOfPlayer(game: DamaGameState, userId: string): DamaColor {
 export function currentLegalMoves(state: DamaMatchRuntimeState): DamaMove[] {
   const { game } = state;
   if (game.phase !== DamaPhase.PLAYING || !game.currentPlayerId) return [];
-  return legalMoves(game.board, colorOfPlayer(game, game.currentPlayerId));
+  return legalMoves(game.board, colorOfPlayer(game, game.currentPlayerId), game.rulesVersion);
 }
 
 /**
@@ -94,7 +99,9 @@ function move(state: DamaMatchRuntimeState, command: DamaMoveCommand): DamaRunti
   const { game } = state;
   if (game.currentPlayerId !== command.playerId) throw new Error('NOT_PLAYER_TURN');
   const color = colorOfPlayer(game, command.playerId);
-  const chosen = legalMoves(game.board, color).find((candidate) => sameMove(candidate, command));
+  const chosen = legalMoves(game.board, color, game.rulesVersion).find((candidate) =>
+    sameMove(candidate, command),
+  );
   if (!chosen) throw new Error('ILLEGAL_DAMA_MOVE');
 
   const movedMan = !isKing(game.board[chosen.path[0]]);
@@ -123,7 +130,7 @@ function move(state: DamaMatchRuntimeState, command: DamaMoveCommand): DamaRunti
     },
   ];
 
-  const replies = legalMoves(board, opponent.color);
+  const replies = legalMoves(board, opponent.color, game.rulesVersion);
   if (countPieces(board, opponent.color) === 0) {
     next = finish(next, command.playerId, 'NO_PIECES');
   } else if (replies.length === 0) {

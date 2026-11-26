@@ -26,10 +26,16 @@ export const DAMA_GAME: TurnGameDefinition<
   eventNames: DAMA_EVENT_NAMES,
   defaultTurnSeconds: 40,
   isRulesVersion: isDamaRulesVersion,
-  // Colours are drawn fairly: whoever gets Light moves first.
-  create: (matchId, [a, b]) => {
+  // Colours are drawn fairly: whoever gets Light moves first. The rules
+  // (ታንከኛ or እግረኛ) come from the match's game mode.
+  create: (matchId, [a, b], rulesVersion) => {
     const light = randomInt(2);
-    return createDamaMatch(matchId, light === 0 ? a : b, light === 0 ? b : a);
+    return createDamaMatch(
+      matchId,
+      light === 0 ? a : b,
+      light === 0 ? b : a,
+      isDamaRulesVersion(rulesVersion) ? rulesVersion : undefined,
+    );
   },
   execute: executeDamaCommand,
   isFinished: (state) => state.game.phase === DamaPhase.FINISHED,

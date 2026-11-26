@@ -10,18 +10,34 @@ import {
   rowOf,
   squareAt,
 } from '../domain/dama.board';
-import { DamaBoard, DamaColor, DamaMove, EMPTY } from '../domain/dama.types';
+import {
+  DAMA_ET_V1,
+  DamaBoard,
+  DamaColor,
+  DamaMove,
+  DamaRulesVersion,
+  EMPTY,
+  menCaptureBackward,
+} from '../domain/dama.types';
 
 /**
- * Every legal move for `color` under DAMA_ET_V1:
+ * Every legal move for `color` under `rules`:
  * - capturing is compulsory, and only the sequences that capture the most
  *   pieces are legal (each piece counts 1, kings included);
  * - otherwise the quiet moves (men one step forward, kings slide any distance).
+ * Under DAMA_ET_FORWARD_V1 men capture forward only; kings are unchanged.
  */
-export function legalMoves(board: DamaBoard, color: DamaColor): DamaMove[] {
+export function legalMoves(
+  board: DamaBoard,
+  color: DamaColor,
+  rules: DamaRulesVersion = DAMA_ET_V1,
+): DamaMove[] {
+  const backward = menCaptureBackward(rules);
   const captures: DamaMove[] = [];
   for (let square = 0; square < 64; square += 1) {
-    if (colorOf(board[square]) === color) captures.push(...captureSequences(board, square));
+    if (colorOf(board[square]) === color) {
+      captures.push(...captureSequences(board, square, backward));
+    }
   }
   if (captures.length > 0) {
     const most = Math.max(...captures.map((move) => move.captured.length));
@@ -63,8 +79,9 @@ function quietMoves(board: DamaBoard, from: number): DamaMove[] {
  * piece leaves its start square, captured pieces stay on the board until the
  * move ends (they block and can't be jumped twice). A man that passes the far
  * row mid-capture keeps capturing as a man; it is crowned only if it ends there.
+ * With `menBackward` false a man only jumps forward (every jump of the chain).
  */
-function captureSequences(board: DamaBoard, from: number): DamaMove[] {
+function captureSequences(board: DamaBoard, from: number, menBackward: boolean): DamaMove[] {
   const piece = board[from];
   const color = colorOf(piece)!;
   const king = isKing(piece);
@@ -75,6 +92,7 @@ function captureSequences(board: DamaBoard, from: number): DamaMove[] {
   const search = (at: number, path: number[], captured: number[]): void => {
     let extended = false;
     for (const [dRow, dCol] of DIAGONALS) {
+      if (!king && !menBackward && dRow !== forwardRow(color)) continue;
       let row = rowOf(at) + dRow;
       let col = colOf(at) + dCol;
       // Kings may fly over empty squares to reach the victim.

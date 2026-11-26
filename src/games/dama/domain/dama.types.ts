@@ -1,15 +1,26 @@
 /**
- * Ethiopian Dama (ዳማ), rules version DAMA_ET_V1.
+ * Ethiopian Dama (ዳማ). Two rules versions, chosen per game mode:
+ * - DAMA_ET_V1 (ታንከኛ): men capture forward and backward.
+ * - DAMA_ET_FORWARD_V1 (እግረኛ): men capture forward only (every jump of a
+ *   multi-capture too). Everything else, kings included, is the same.
  *
  * Board: 8×8, play on the dark squares only. Squares are indexed 0..63 as
  * `row * 8 + col`; row 0 is Light's back rank, row 7 is Dark's. A square is
  * dark when `(row + col)` is even, so a1 (index 0) is dark.
  */
 export const DAMA_ET_V1 = 'DAMA_ET_V1' as const;
-export type DamaRulesVersion = typeof DAMA_ET_V1;
+export const DAMA_ET_FORWARD_V1 = 'DAMA_ET_FORWARD_V1' as const;
+export type DamaRulesVersion = typeof DAMA_ET_V1 | typeof DAMA_ET_FORWARD_V1;
+
+export const DAMA_RULES_VERSIONS: readonly DamaRulesVersion[] = [DAMA_ET_V1, DAMA_ET_FORWARD_V1];
 
 export function isDamaRulesVersion(value: string): value is DamaRulesVersion {
-  return value === DAMA_ET_V1;
+  return (DAMA_RULES_VERSIONS as readonly string[]).includes(value);
+}
+
+/** Whether men may capture backwards under these rules (kings always may). */
+export function menCaptureBackward(rules: DamaRulesVersion): boolean {
+  return rules !== DAMA_ET_FORWARD_V1;
 }
 
 export enum DamaColor {

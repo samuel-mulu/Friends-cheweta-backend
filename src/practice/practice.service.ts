@@ -6,6 +6,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { COMMITTED_MATCH_STATUSES } from '../common/match-status';
+import { DamaRulesVersion } from '../games/dama/domain';
 import { normalizeEthiopianPhone } from '../common/utils/phone.util';
 import { Prisma } from '../generated/prisma/client';
 import { MatchEntryStatus, MatchStatus, UserStatus } from '../generated/prisma/enums';
@@ -53,6 +54,8 @@ export class PracticeService {
     commandId: string,
     tokensToWin = 4,
     game: PracticeGame = 'LUDO',
+    /** Dama type (ታንከኛ / እግረኛ); default the mode's. Ignored for other games. */
+    damaRules?: DamaRulesVersion,
   ): Promise<PracticeStartResult> {
     const commandKey = this.redis.key('practice', 'cmd', userId, commandId);
     const previous = await this.redis.getJson<PracticeStartResult>(commandKey);
@@ -119,8 +122,14 @@ export class PracticeService {
           });
         }
 
-        // Ludo practice always uses the current rules; Dama uses its mode's.
-        const rulesVersion = game === 'LUDO' ? PRACTICE_RULES_VERSION : mode.rulesVersion;
+        // Ludo practice always uses the current rules; Dama the chosen type
+        // (practice is free, so it needs no stake of that type); others their mode's.
+        const rulesVersion =
+          game === 'LUDO'
+            ? PRACTICE_RULES_VERSION
+            : game === 'DAMA' && damaRules
+              ? damaRules
+              : mode.rulesVersion;
         const match = await this.createMatch(userId, bot.id, mode, rulesVersion, tokensToWin);
         await this.joins.markJoined(match.id, bot.id); // the bot is always "in the room"
         const result: PracticeStartResult = {

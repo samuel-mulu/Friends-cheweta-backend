@@ -2,7 +2,7 @@ import { IsEnum, IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'cl
 import { PaymentChannel } from '../../generated/prisma/enums';
 
 export class CreateWithdrawalDto {
-  @Matches(/^\d+$/, { message: 'amountMinor must be a positive integer string.' })
+  @Matches(/^\d{1,18}$/, { message: 'amountMinor must be a positive integer string.' })
   amountMinor!: string;
 
   @IsEnum(PaymentChannel)
@@ -12,6 +12,13 @@ export class CreateWithdrawalDto {
   @IsNotEmpty()
   @MaxLength(160)
   destination!: string;
+
+  @IsString()
+  @MaxLength(72)
+  @IsNotEmpty({
+    message: 'Confirm your account password. Update the app if you cannot enter a password.',
+  })
+  password!: string;
 
   @IsString()
   @IsNotEmpty()

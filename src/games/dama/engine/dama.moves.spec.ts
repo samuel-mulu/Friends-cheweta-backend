@@ -1,4 +1,12 @@
-import { DamaCell, DamaColor, boardFrom, countPieces, initialBoard } from '../domain';
+import {
+  DAMA_ET_FORWARD_V1,
+  DAMA_ET_V1,
+  DamaCell,
+  DamaColor,
+  boardFrom,
+  countPieces,
+  initialBoard,
+} from '../domain';
 import { applyMove, legalMoves, movableSquares } from './dama.moves';
 
 /** "c3" → square index (a1 = 0, row-major from Light's side). */
@@ -104,5 +112,65 @@ describe('Dama moves (DAMA_ET_V1)', () => {
     expect(after).toEqual({ board: board({ d8: 'L' }), promoted: true });
     const dark = applyMove(board({ b2: 'd' }), { path: [sq('b2'), sq('a1')], captured: [] });
     expect(dark.board[sq('a1')]).toBe('D');
+  });
+});
+
+describe('Dama moves (DAMA_ET_FORWARD_V1, እግረኛ)', () => {
+  const forward = (pieces: Record<string, DamaCell>, color: DamaColor) =>
+    legalMoves(board(pieces), color, DAMA_ET_FORWARD_V1);
+
+  it('defaults to ታንከኛ (backward captures allowed)', () => {
+    const pieces = { e5: 'l', d4: 'd' } as const;
+    expect(legalMoves(board(pieces), DamaColor.LIGHT)).toEqual(
+      legalMoves(board(pieces), DamaColor.LIGHT, DAMA_ET_V1),
+    );
+  });
+
+  it('a man may not capture backwards; it steps instead', () => {
+    const moves = forward({ e5: 'l', d4: 'd' }, DamaColor.LIGHT);
+    expect(moves.every((move) => move.captured.length === 0)).toBe(true);
+    expect(paths(moves)).toEqual(
+      paths([{ path: [sq('e5'), sq('d6')] }, { path: [sq('e5'), sq('f6')] }]),
+    );
+  });
+
+  it('dark men capture forward only too (down the board)', () => {
+    expect(forward({ d4: 'd', e5: 'l' }, DamaColor.DARK).some((m) => m.captured.length)).toBe(
+      false,
+    );
+    expect(forward({ e5: 'd', d4: 'l' }, DamaColor.DARK)).toEqual([
+      { path: [sq('e5'), sq('c3')], captured: [sq('d4')] },
+    ]);
+  });
+
+  it('a man still captures forward, and that capture is compulsory', () => {
+    const moves = forward({ c3: 'l', a3: 'l', d4: 'd' }, DamaColor.LIGHT);
+    expect(moves).toEqual([{ path: [sq('c3'), sq('e5')], captured: [sq('d4')] }]);
+  });
+
+  it('a multi-capture cannot turn backwards', () => {
+    const pieces = { c3: 'l', d4: 'd', f4: 'd' } as const;
+    // ታንከኛ: c3xe5xg3 (forward then backward) takes 2.
+    expect(legalMoves(board(pieces), DamaColor.LIGHT)).toEqual([
+      { path: [sq('c3'), sq('e5'), sq('g3')], captured: [sq('d4'), sq('f4')] },
+    ]);
+    // እግረኛ: the chain stops after the forward jump.
+    expect(forward(pieces, DamaColor.LIGHT)).toEqual([
+      { path: [sq('c3'), sq('e5')], captured: [sq('d4')] },
+    ]);
+  });
+
+  it('a forward chain of several jumps still counts', () => {
+    expect(forward({ c3: 'l', d4: 'd', f6: 'd' }, DamaColor.LIGHT)).toEqual([
+      { path: [sq('c3'), sq('e5'), sq('g7')], captured: [sq('d4'), sq('f6')] },
+    ]);
+  });
+
+  it('kings are unchanged: they still capture backwards from afar', () => {
+    const moves = forward({ h8: 'L', d4: 'd' }, DamaColor.LIGHT);
+    expect(paths(moves)).toEqual(
+      paths(['c3', 'b2', 'a1'].map((to) => ({ path: [sq('h8'), sq(to)] }))),
+    );
+    expect(moves.every((move) => move.captured[0] === sq('d4'))).toBe(true);
   });
 });

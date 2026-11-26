@@ -196,15 +196,16 @@ export class WalletService {
     if (requiredBalance === 'available') where.availableBalance = { gte: input.amountMinor };
     if (requiredBalance === 'locked') where.lockedBalance = { gte: input.amountMinor };
 
-    const updated = await db.wallet.updateMany({
+    const [updatedWallet] = await db.wallet.updateManyAndReturn({
       where,
+      select: { availableBalance: true, lockedBalance: true },
       data: {
         ...(availableDelta !== 0n ? { availableBalance: { increment: availableDelta } } : {}),
         ...(lockedDelta !== 0n ? { lockedBalance: { increment: lockedDelta } } : {}),
       },
     });
 
-    if (updated.count !== 1) {
+    if (!updatedWallet) {
       throw new BadRequestException({
         code: requiredBalance === 'locked' ? 'INSUFFICIENT_LOCKED_BALANCE' : 'INSUFFICIENT_BALANCE',
         message:
@@ -214,10 +215,11 @@ export class WalletService {
       });
     }
 
-    const beforeAvailable = wallet.availableBalance;
-    const beforeLocked = wallet.lockedBalance;
-    const afterAvailable = beforeAvailable + availableDelta;
-    const afterLocked = beforeLocked + lockedDelta;
+    // Use the returned balances so the ledger reflects the order of concurrent writes.
+    const afterAvailable = updatedWallet.availableBalance;
+    const afterLocked = updatedWallet.lockedBalance;
+    const beforeAvailable = afterAvailable - availableDelta;
+    const beforeLocked = afterLocked - lockedDelta;
 
     return db.walletTransaction.create({
       data: {

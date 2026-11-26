@@ -7,6 +7,14 @@ export type LobbyPlayerState = 'ONLINE' | 'READY' | 'CHALLENGED';
 export const CUSTOM_STAKE_MIN_MINOR = 500;
 export const CUSTOM_STAKE_MAX_MINOR = 1_000_000;
 
+/**
+ * Custom stake codes are `<GAME>_CUSTOM_<amount>`; a rules version listed here
+ * gets its own stake per amount (`..._<suffix>`), e.g. Dama እግረኛ.
+ */
+export const CUSTOM_CODE_SUFFIX: Readonly<Record<string, string>> = {
+  DAMA_ET_FORWARD_V1: 'FWD',
+};
+
 export type LobbyUserContext = {
   gameModeId: string;
   /** The stake's amount, so player views can show it without a lookup. */

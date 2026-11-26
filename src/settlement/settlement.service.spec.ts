@@ -161,27 +161,27 @@ class FakeDb {
             : [...store.wallets.values()].find((w) => w.id === where.id);
           return row ? { ...row } : null;
         },
-        updateMany: async ({ where, data }: any) => {
-          store.count('wallet.updateMany');
+        updateManyAndReturn: async ({ where, data }: any) => {
+          store.count('wallet.updateManyAndReturn');
           const wallet = [...store.wallets.values()].find((w) => w.id === where.id);
-          if (!wallet) return { count: 0 };
+          if (!wallet) return [];
           if (
             where.availableBalance?.gte !== undefined &&
             wallet.availableBalance < where.availableBalance.gte
           ) {
-            return { count: 0 };
+            return [];
           }
           if (
             where.lockedBalance?.gte !== undefined &&
             wallet.lockedBalance < where.lockedBalance.gte
           ) {
-            return { count: 0 };
+            return [];
           }
           if (data.availableBalance?.increment !== undefined)
             wallet.availableBalance += data.availableBalance.increment;
           if (data.lockedBalance?.increment !== undefined)
             wallet.lockedBalance += data.lockedBalance.increment;
-          return { count: 1 };
+          return [{ ...wallet }];
         },
       },
       walletTransaction: {
@@ -251,7 +251,7 @@ describe('SettlementService.settleMatchResult (DB3)', () => {
       'match.updateMany': 1,
       'walletTransaction.findUnique': 3, // 2 stake debits + 1 winner credit
       'wallet.findUnique': 3,
-      'wallet.updateMany': 3,
+      'wallet.updateManyAndReturn': 3,
       'walletTransaction.create': 3,
       'matchParticipant.updateMany': 2,
       'matchEntry.updateMany': 1,
@@ -313,7 +313,7 @@ describe('SettlementService.settleMatchResult (DB3)', () => {
     expect(store.wallets.get('user-1')!.availableBalance).toBe(950n);
     // Second call should short-circuit on the matchSettlement lookup alone.
     expect(store.queryCounts.get('matchSettlement.findUnique')).toBe(1);
-    expect(store.queryCounts.get('wallet.updateMany')).toBeUndefined();
+    expect(store.queryCounts.get('wallet.updateManyAndReturn')).toBeUndefined();
   });
 });
 

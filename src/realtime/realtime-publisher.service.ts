@@ -32,6 +32,7 @@ export const DAMA_EVENT_NAMES: Record<string, string> = {
 
 /** Admin dashboards receive a read-only copy of every authoritative match event. */
 export const ADMIN_OPERATIONS_ROOM = 'admin:operations';
+export const PLAYER_COMMUNICATIONS_ROOM = 'players:communications';
 
 @Injectable()
 export class RealtimePublisherService {

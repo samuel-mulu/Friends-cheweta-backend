@@ -189,6 +189,38 @@ describe('LobbyService game lobby (every stake of a game)', () => {
       }
     });
 
+    it('a custom stake follows the chosen rules (its own stake per type)', async () => {
+      h.modes.push({
+        id: 'ludo-fwd-10',
+        gameId: GAME.id,
+        stakeAmountMinor: 1000n,
+        enabled: true,
+        code: 'LF10',
+        name: 'Ludo fwd 10',
+        custom: false,
+        playerCount: 2,
+        platformFeeBps: 0,
+        turnDurationSeconds: 30,
+        rulesVersion: 'DAMA_ET_FORWARD_V1',
+      });
+      // A catalog amount of that type is reused.
+      expect(
+        (await h.lobby.joinGame('A', 'LUDO', undefined, 1000, 'DAMA_ET_FORWARD_V1')).gameModeId,
+      ).toBe('ludo-fwd-10');
+      // A new amount gets a stake of that type, with its own code.
+      await h.lobby.joinGame('B', 'LUDO', undefined, 50_000, 'DAMA_ET_FORWARD_V1');
+      expect(h.prisma.gameMode.upsert).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          where: { code: 'LUDO_CUSTOM_50000_FWD' },
+          create: expect.objectContaining({ rulesVersion: 'DAMA_ET_FORWARD_V1' }),
+        }),
+      );
+      // Rules without any stake are refused.
+      await expect(
+        h.lobby.joinGame('C', 'LUDO', undefined, 50_000, 'NOPE_V1'),
+      ).rejects.toMatchObject({ response: { code: 'LOBBY_MODE_DISABLED' } });
+    });
+
     it('a custom stake leaves the lobby once nobody sits at it', async () => {
       await h.lobby.joinGame('A', 'LUDO', undefined, 50_000);
       await h.lobby.joinGame('A', 'LUDO', 'ludo-10');

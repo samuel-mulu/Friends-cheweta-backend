@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { LobbyRooms } from './lobby-rooms';
 import {
+  CUSTOM_CODE_SUFFIX,
   CUSTOM_STAKE_MAX_MINOR,
   CUSTOM_STAKE_MIN_MINOR,
   LOBBY_TTL_SECONDS,
@@ -51,6 +52,7 @@ export class LobbyService {
     gameCode: string,
     gameModeId?: string,
     customStakeMinor?: number,
+    rulesVersion?: string,
   ): Promise<{
     gameId: string;
     gameModeId: string;
@@ -62,7 +64,7 @@ export class LobbyService {
     const game = await this.requireGame(gameCode);
     let stakes = await this.stakesOf(game);
     if (customStakeMinor !== undefined) {
-      const custom = await this.customStake(game, customStakeMinor, userId);
+      const custom = await this.customStake(game, customStakeMinor, userId, rulesVersion);
       gameModeId = custom.id;
       if (!stakes.some((stake) => stake.id === custom.id)) stakes = [...stakes, custom];
     } else if (gameModeId && !stakes.some((stake) => stake.id === gameModeId)) {
@@ -217,14 +219,24 @@ export class LobbyService {
   /**
    * The stake for an amount a player typed: the catalog stake if one has that
    * amount, else a custom stake (created once, shared by everyone choosing
-   * it), modelled on the game's smallest catalog stake. The player must hold
-   * the amount.
+   * it), modelled on the game's smallest catalog stake of `rulesVersion` (any
+   * rules when not given). The player must hold the amount.
    */
   private async customStake(
     game: Awaited<ReturnType<LobbyService['requireGame']>>,
     amountMinor: number,
     userId: string,
+    rulesVersion?: string,
   ) {
+    const ofRules = rulesVersion
+      ? game.modes.filter((mode) => mode.rulesVersion === rulesVersion)
+      : game.modes;
+    if (ofRules.length === 0) {
+      throw new BadRequestException({
+        code: 'LOBBY_MODE_DISABLED',
+        message: 'This game type has no open stakes.',
+      });
+    }
     if (
       !Number.isInteger(amountMinor) ||
       amountMinor % 100 !== 0 ||
@@ -247,11 +259,13 @@ export class LobbyService {
         message: 'Available wallet balance is below the game stake.',
       });
     }
-    const listed = game.modes.find((mode) => mode.stakeAmountMinor === amount);
+    const listed = ofRules.find((mode) => mode.stakeAmountMinor === amount);
     if (listed) return listed;
 
-    const template = game.modes[0];
-    const code = `${game.code}_CUSTOM_${amountMinor}`;
+    const template = ofRules[0];
+    // Existing custom codes stay as they were; other types get their own.
+    const suffix = CUSTOM_CODE_SUFFIX[template.rulesVersion];
+    const code = `${game.code}_CUSTOM_${amountMinor}${suffix ? `_${suffix}` : ''}`;
     const mode = await this.prisma.gameMode.upsert({
       where: { code },
       update: {},

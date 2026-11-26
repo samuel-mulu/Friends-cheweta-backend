@@ -1,4 +1,4 @@
-import { DamaFinishReason, DamaPhase, DamaResult } from '../domain';
+import { DamaFinishReason, DamaPhase, DamaResult, DamaRulesVersion } from '../domain';
 import {
   DamaMatchRuntimeState,
   colorOfPlayer,
@@ -25,9 +25,16 @@ export function simulateDamaMatch(input: {
   light: { userId: string; bot: DamaBot };
   dark: { userId: string; bot: DamaBot };
   maxPlies?: number;
+  /** Default ታንከኛ (DAMA_ET_V1). */
+  rulesVersion?: DamaRulesVersion;
 }): DamaSimulationResult {
   const maxPlies = input.maxPlies ?? 2000;
-  let state = createDamaMatch(input.matchId, input.light.userId, input.dark.userId);
+  let state = createDamaMatch(
+    input.matchId,
+    input.light.userId,
+    input.dark.userId,
+    input.rulesVersion,
+  );
   const bots: Record<string, DamaBot> = {
     [input.light.userId]: input.light.bot,
     [input.dark.userId]: input.dark.bot,

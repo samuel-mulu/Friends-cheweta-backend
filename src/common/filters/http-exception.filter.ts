@@ -34,7 +34,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       ...(details !== undefined ? { details } : {}),
       requestId: request.requestId,
       timestamp: new Date().toISOString(),
-      path: request.originalUrl,
+      path: request.path,
     });
   }
 }
