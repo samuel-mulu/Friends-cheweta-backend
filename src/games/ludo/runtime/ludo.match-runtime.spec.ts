@@ -53,6 +53,61 @@ describe('LudoMatchRuntime', () => {
     expect(runtime.getState().game.currentPlayerId).toBe('p2');
   });
 
+  describe('leaving while choosing who starts', () => {
+    const resign = (runtime: LudoMatchRuntime, playerId: string) =>
+      runtime.execute({
+        type: 'RESIGN',
+        commandId: `leave-${playerId}`,
+        playerId,
+        expectedVersion: runtime.getState().game.version,
+      });
+    const rollForStart = (runtime: LudoMatchRuntime, playerId: string) =>
+      runtime.execute({
+        type: 'ROLL_FOR_START',
+        commandId: `start-${playerId}`,
+        playerId,
+        expectedVersion: runtime.getState().game.version,
+      });
+
+    it('with two players the one who stays wins', () => {
+      const runtime = new LudoMatchRuntime('m1', ['p1', 'p2'], new FixedDiceProvider([4]));
+      rollForStart(runtime, 'p2');
+      const result = resign(runtime, 'p1');
+      expect(result.state.game.phase).toBe(LudoMatchPhase.FINISHED);
+      expect(result.state.game.winnerOrder).toEqual(['p2', 'p1']);
+      expect(result.events.map((event) => event.type)).toContain(
+        LudoRuntimeEventType.PLAYER_RESIGNED,
+      );
+    });
+
+    it('with more players the others roll on, and a finished round starts the match', () => {
+      const runtime = new LudoMatchRuntime('m1', ['p1', 'p2', 'p3'], new FixedDiceProvider([3, 5]));
+      rollForStart(runtime, 'p1');
+      rollForStart(runtime, 'p2');
+      // p3 leaves before rolling: p1 and p2 have rolled, so p2 (5) starts.
+      const result = resign(runtime, 'p3');
+      expect(result.state.game.phase).toBe(LudoMatchPhase.PLAYING);
+      expect(result.state.game.currentPlayerId).toBe('p2');
+      expect(result.state.resignedPlayerIds).toEqual(['p3']);
+    });
+
+    it('a leaver who already rolled is dropped from the round', () => {
+      const runtime = new LudoMatchRuntime(
+        'm1',
+        ['p1', 'p2', 'p3'],
+        new FixedDiceProvider([6, 2, 4]),
+      );
+      rollForStart(runtime, 'p1');
+      resign(runtime, 'p1');
+      const roll = runtime.getState().startingRoll;
+      expect(roll.candidatePlayerIds).toEqual(['p2', 'p3']);
+      expect(roll.rolls).toEqual({});
+      rollForStart(runtime, 'p2');
+      rollForStart(runtime, 'p3');
+      expect(runtime.getState().game.currentPlayerId).toBe('p3');
+    });
+  });
+
   it('treats a retried command as stale (persistence layer owns idempotency)', () => {
     const runtime = new LudoMatchRuntime('m1', ['p1', 'p2'], new FixedDiceProvider([4, 2]));
     const command = {

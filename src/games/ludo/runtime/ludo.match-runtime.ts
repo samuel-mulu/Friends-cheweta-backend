@@ -193,8 +193,18 @@ export class LudoMatchRuntime {
       }),
     ];
 
+    this.settleStartingRoll(events);
+    return events;
+  }
+
+  /**
+   * Once every candidate has rolled: a tie starts another round among the
+   * leaders, otherwise the highest roll starts the match.
+   */
+  private settleStartingRoll(events: LudoRuntimeEvent[]): void {
+    const game = this.state.game;
     const candidates = this.state.startingRoll.candidatePlayerIds;
-    if (Object.keys(this.state.startingRoll.rolls).length !== candidates.length) return events;
+    if (Object.keys(this.state.startingRoll.rolls).length !== candidates.length) return;
 
     const highest = Math.max(...candidates.map((id) => this.state.startingRoll.rolls[id]));
     const leaders = candidates.filter((id) => this.state.startingRoll.rolls[id] === highest);
@@ -211,7 +221,7 @@ export class LudoMatchRuntime {
           candidatePlayerIds: [...leaders],
         }),
       );
-      return events;
+      return;
     }
 
     const starter = leaders[0];
@@ -226,7 +236,6 @@ export class LudoMatchRuntime {
       this.event(LudoRuntimeEventType.MATCH_STARTED, { playerId: starter }),
       this.event(LudoRuntimeEventType.TURN_STARTED, { playerId: starter }),
     );
-    return events;
   }
 
   private rollDice(command: RollDiceCommand): LudoRuntimeEvent[] {
@@ -396,9 +405,10 @@ export class LudoMatchRuntime {
     return events;
   }
 
+  /** Allowed while playing and during the starting roll (who goes first). */
   private resign(command: ResignCommand): LudoRuntimeEvent[] {
     const game = this.state.game;
-    if (game.phase !== LudoMatchPhase.PLAYING) throw new Error('MATCH_NOT_PLAYING');
+    if (game.phase === LudoMatchPhase.FINISHED) throw new Error('MATCH_NOT_PLAYING');
     if (!game.players.some((player) => player.userId === command.playerId))
       throw new Error('PLAYER_NOT_IN_MATCH');
     if (this.state.resignedPlayerIds.includes(command.playerId))
@@ -416,6 +426,17 @@ export class LudoMatchRuntime {
     ];
 
     if (this.tryFinishMatch(events)) return events;
+
+    if (game.phase === LudoMatchPhase.PRE_GAME) {
+      // Still choosing who starts: the others roll on without them.
+      const startingRoll = this.state.startingRoll;
+      startingRoll.candidatePlayerIds = startingRoll.candidatePlayerIds.filter(
+        (id) => id !== command.playerId,
+      );
+      delete startingRoll.rolls[command.playerId];
+      this.settleStartingRoll(events);
+      return events;
+    }
 
     if (game.currentPlayerId === command.playerId) this.advanceTurn(events);
     return events;

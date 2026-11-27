@@ -91,7 +91,7 @@ export const LUDO_GAME: TurnGameDefinition<
   },
   resignCommand: () => ({ type: 'RESIGN' }),
   canResign: (state, userId) =>
-    state.game.phase === LudoMatchPhase.PLAYING &&
+    state.game.phase !== LudoMatchPhase.FINISHED &&
     !state.resignedPlayerIds.includes(userId) &&
     !state.game.winnerOrder.includes(userId),
   turnPhase: (state) => state.game.turnPhase,
