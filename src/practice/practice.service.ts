@@ -19,6 +19,7 @@ import {
   PRACTICE_SOURCE,
   PracticeGame,
   PracticeLevel,
+  practiceBotLevels,
   practiceRulesFor,
 } from './practice.constants';
 
@@ -56,7 +57,15 @@ export class PracticeService {
     game: PracticeGame = 'LUDO',
     /** The game type (rules version) to practise; default the game's usual rules. */
     requestedRules?: string,
+    /** Ludo only: players at the table, me included (2–4). */
+    players = 2,
   ): Promise<PracticeStartResult> {
+    if (players !== 2 && game !== 'LUDO') {
+      throw new ConflictException({
+        code: 'PRACTICE_PLAYERS_NOT_SUPPORTED',
+        message: 'Only Ludo can be practised with more players.',
+      });
+    }
     const commandKey = this.redis.key('practice', 'cmd', userId, commandId);
     const previous = await this.redis.getJson<PracticeStartResult>(commandKey);
     if (previous) return previous;
@@ -106,16 +115,34 @@ export class PracticeService {
           });
         }
 
-        const bot = await this.prisma.user.findUnique({
-          where: { phoneNumber: normalizeEthiopianPhone(PRACTICE_BOTS[level].phone) },
-          select: { id: true, isBot: true },
+        const botLevels = practiceBotLevels(level, players);
+        const bots = await this.prisma.user.findMany({
+          where: {
+            phoneNumber: {
+              in: botLevels.map((botLevel) =>
+                normalizeEthiopianPhone(PRACTICE_BOTS[botLevel].phone),
+              ),
+            },
+          },
+          select: { id: true, isBot: true, phoneNumber: true },
         });
+        // Seat order follows the levels (the chosen one sits next to me).
+        const botIds = botLevels
+          .map(
+            (botLevel) =>
+              bots.find(
+                (bot) =>
+                  bot.isBot &&
+                  bot.phoneNumber === normalizeEthiopianPhone(PRACTICE_BOTS[botLevel].phone),
+              )?.id,
+          )
+          .filter((id): id is string => Boolean(id));
         const mode = await this.prisma.gameMode.findFirst({
           where: { enabled: true, playerCount: 2, game: { code: game, enabled: true } },
           orderBy: { stakeAmountMinor: 'asc' },
           select: { id: true, gameId: true, rulesVersion: true },
         });
-        if (!bot?.isBot || !mode) {
+        if (botIds.length !== botLevels.length || !mode) {
           throw new ServiceUnavailableException({
             code: 'PRACTICE_UNAVAILABLE',
             message: 'Practice is not set up yet (run the seed).',
@@ -127,8 +154,8 @@ export class PracticeService {
         const rulesVersion =
           practiceRulesFor(game, requestedRules) ??
           (game === 'LUDO' ? PRACTICE_RULES_VERSION : mode.rulesVersion);
-        const match = await this.createMatch(userId, bot.id, mode, rulesVersion, tokensToWin);
-        await this.joins.markJoined(match.id, bot.id); // the bot is always "in the room"
+        const match = await this.createMatch(userId, botIds, mode, rulesVersion, tokensToWin);
+        for (const botId of botIds) await this.joins.markJoined(match.id, botId); // bots are always "in the room"
         const result: PracticeStartResult = {
           matchId: match.id,
           gameCode: game,
@@ -149,7 +176,7 @@ export class PracticeService {
 
   private async createMatch(
     userId: string,
-    botId: string,
+    botIds: string[],
     mode: { id: string; gameId: string },
     rulesVersion: string,
     tokensToWin: number,
@@ -169,14 +196,11 @@ export class PracticeService {
             source: PRACTICE_SOURCE,
             entrySecuredAt: new Date(),
             participants: {
-              create: [
-                { userId, seat: 0 },
-                { userId: botId, seat: 1 },
-              ],
+              create: [userId, ...botIds].map((id, seat) => ({ userId: id, seat })),
             },
             // Zero-amount entries keep settlement's invariants identical to paid games.
             entries: {
-              create: [userId, botId].map((id) => ({
+              create: [userId, ...botIds].map((id) => ({
                 userId: id,
                 amountMinor: 0n,
                 status: MatchEntryStatus.LOCKED,

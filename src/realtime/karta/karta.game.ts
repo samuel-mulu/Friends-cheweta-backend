@@ -5,6 +5,7 @@ import { AppEnv } from '../../config/env';
 import { GameEntryService } from '../../game-entry/game-entry.service';
 import {
   KARTA_RANKS,
+  KARTA_TABLE_V1,
   KartaMatchRuntimeState,
   KartaRuntimeCommand,
   KartaRuntimeEvent,
@@ -47,9 +48,12 @@ export const KARTA_GAME: TurnGameDefinition<
   },
   defaultTurnSeconds: 15,
   isRulesVersion: isKartaRulesVersion,
-  // Who starts (deals) round 1 is drawn fairly.
-  create: (matchId, [a, b]) =>
-    createKartaMatch(matchId, [a, b], randomInt(2) === 0 ? a : b, cryptoSeed),
+  // 1v1: who starts (deals) round 1 is drawn fairly. A table round: the
+  // table seats its starter (the last round's winner) at seat 0.
+  create: (matchId, [a, b], rulesVersion) =>
+    rulesVersion === KARTA_TABLE_V1
+      ? createKartaMatch(matchId, [a, b], a, cryptoSeed, KARTA_TABLE_V1)
+      : createKartaMatch(matchId, [a, b], randomInt(2) === 0 ? a : b, cryptoSeed),
   execute: (state, command) => executeKartaCommand(state, command, cryptoSeed),
   isFinished: (state) => state.game.phase === 'FINISHED',
   // Time ran out: the chooser calls a random rank, or the starter turns the next card.

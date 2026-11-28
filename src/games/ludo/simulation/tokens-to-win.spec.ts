@@ -45,17 +45,18 @@ describe('first to N home (tokensToWin)', () => {
         result.finalState.players
           .find((player) => player.userId === userId)!
           .tokens.filter((token) => token.state === LudoTokenState.FINISHED).length;
-      // Everyone who finished on the board reached exactly the goal (the last
-      // player is ranked by elimination and stays short of it).
-      for (const playerId of result.winnerOrder.slice(0, -1)) expect(home(playerId)).toBe(goal);
-      // A player who is out leaves no token on the shared track to block the
-      // others; tokens already in the private home lane stay where they are.
+      // 3 players: the match ends at the first winner, who reached exactly the
+      // goal; everyone else is still short of it.
+      const [winner, ...rest] = result.winnerOrder;
+      expect(home(winner)).toBe(goal);
+      for (const playerId of rest) expect(home(playerId)).toBeLessThan(goal);
+      // The winner is out: no token left on the shared track to block anyone;
+      // tokens already in the private home lane stay where they are.
       const onTrack = (userId: string) =>
         result.finalState.players
           .find((player) => player.userId === userId)!
           .tokens.filter((token) => token.state === LudoTokenState.ACTIVE);
-      for (const playerId of result.winnerOrder.slice(0, -1)) expect(onTrack(playerId)).toEqual([]);
-      expect(home(result.winnerOrder.at(-1)!)).toBeLessThan(goal);
+      expect(onTrack(winner)).toEqual([]);
       replayLudoSimulation(result);
     }
   });

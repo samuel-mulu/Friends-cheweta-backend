@@ -1,7 +1,7 @@
 import { Injectable, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Server } from 'socket.io';
-import { ChallengeTransition } from '../challenge/challenge.types';
+import { ChallengeTransition, seatsOf } from '../challenge/challenge.types';
 import { LobbyRooms } from '../lobby/lobby-rooms';
 import { REALTIME_PROTOCOL_VERSION } from './realtime.types';
 
@@ -113,7 +113,7 @@ export class RealtimePublisherService {
   /** Single broadcast path for every challenge outcome (user command, disconnect, sweep). */
   publishChallengeTransition(transition: ChallengeTransition): void {
     const { challenge, event } = transition;
-    for (const userId of new Set([challenge.challengerId, challenge.opponentId])) {
+    for (const userId of new Set(seatsOf(challenge))) {
       if (userId) this.publishUser(userId, event, challenge);
     }
     for (const player of transition.restoredPlayers) {

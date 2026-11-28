@@ -12,12 +12,19 @@ async function harness() {
   const created: any[] = [];
   const prisma = {
     user: {
-      findUnique: jest.fn(async ({ where }: any) => {
-        if (where.id === 'human') return { status: UserStatus.ACTIVE, isBot: false };
-        if (where.phoneNumber === normalizeEthiopianPhone(PRACTICE_BOTS.HARD.phone))
-          return { id: 'bot-hard', isBot: true };
-        return null;
-      }),
+      findUnique: jest.fn(async ({ where }: any) =>
+        where.id === 'human' ? { status: UserStatus.ACTIVE, isBot: false } : null,
+      ),
+      // One bot account per level.
+      findMany: jest.fn(async ({ where }: any) =>
+        (['EASY', 'NORMAL', 'HARD'] as const)
+          .map((level) => ({
+            id: `bot-${level.toLowerCase()}`,
+            isBot: true,
+            phoneNumber: normalizeEthiopianPhone(PRACTICE_BOTS[level].phone),
+          }))
+          .filter((bot) => (where.phoneNumber.in as string[]).includes(bot.phoneNumber)),
+      ),
     },
     matchParticipant: { findFirst: jest.fn(async () => committed) },
     gameMode: { findFirst: jest.fn(async () => ({ id: 'mode-10', gameId: 'ludo' })) },
@@ -58,6 +65,24 @@ describe('PracticeService', () => {
     ]);
     expect(data.entries.create.every((e: any) => e.amountMinor === 0n)).toBe(true);
     expect(h.timeouts.markJoined).toHaveBeenCalledWith('pm-1', 'bot-hard');
+  });
+
+  it('a 4-player Ludo practice seats one bot of every level, the chosen one first', async () => {
+    await h.service.start('human', 'EASY', cmd(5), 4, 'LUDO', undefined, 4);
+    expect(h.created[0].participants.create).toEqual([
+      { userId: 'human', seat: 0 },
+      { userId: 'bot-easy', seat: 1 },
+      { userId: 'bot-hard', seat: 2 },
+      { userId: 'bot-normal', seat: 3 },
+    ]);
+    expect(h.created[0].entries.create).toHaveLength(4);
+    expect(h.timeouts.markJoined).toHaveBeenCalledTimes(3);
+  });
+
+  it('only Ludo can be practised with more players', async () => {
+    await expect(
+      h.service.start('human', 'HARD', cmd(6), 4, 'DAMA', undefined, 3),
+    ).rejects.toMatchObject({ response: { code: 'PRACTICE_PLAYERS_NOT_SUPPORTED' } });
   });
 
   it('a retried command returns the same match', async () => {

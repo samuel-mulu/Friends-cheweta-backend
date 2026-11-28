@@ -21,7 +21,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-async function createHarness() {
+async function createHarness(playerCount = 2, users = ['A', 'B', 'C']) {
   const { redis, cleanup } = await createTestRedis();
   const committedUsers = new Set<string>();
   const matches = new Map<string, any>();
@@ -32,11 +32,14 @@ async function createHarness() {
     gameMode: {
       findUnique: jest.fn(async () => ({
         id: MODE,
-        code: 'LUDO_1V1',
+        code: playerCount > 2 ? `LUDO_${playerCount}P` : 'LUDO_1V1',
         name: 'Ludo',
+        playerCount,
+        rulesVersion: 'LUDO_CLASSIC_V3',
         stakeAmountMinor: 100n,
         enabled: true,
-        game: { enabled: true },
+        // 1v1 stays game-neutral (no Ludo goal defaults); tables are Ludo.
+        game: { enabled: true, code: playerCount > 2 ? 'LUDO' : 'GAME' },
       })),
     },
     user: {
@@ -97,7 +100,7 @@ async function createHarness() {
 
   const lobby = new LobbyService(prisma as any, redis);
   const service = new ChallengeService(prisma as any, redis, lobby, matchCreation as any);
-  for (const userId of ['A', 'B', 'C']) {
+  for (const userId of users) {
     await lobby.join(userId, MODE);
     await lobby.ready(userId);
   }
@@ -610,6 +613,57 @@ describe('ChallengeService (real Redis Lua)', () => {
       await setPrefs('B', { tokensToWin: 1 });
       const { challenge } = await h.service.create('A', 'B', cmd(), 4);
       expect(challenge.tokensToWin).toBe(1);
+    });
+  });
+});
+
+/** A 4-player Ludo table: it starts only when four players are ready at the same terms. */
+describe('ChallengeService: 4-player table (real Redis Lua)', () => {
+  let t: Awaited<ReturnType<typeof createHarness>>;
+  afterEach(async () => {
+    await t.cleanup();
+  });
+  const seated = () => [...t.matches.values()].map((m) => m.participants.map((p: any) => p.userId));
+
+  it('waits until every seat can be filled, then seats the longest waiting first', async () => {
+    t = await createHarness(4, ['A', 'B', 'C']);
+    expect(await t.service.autoPair('C')).toBeNull();
+    expect(await t.state('A')).toBe('READY');
+
+    await t.lobby.join('D', MODE);
+    await t.lobby.ready('D');
+    const result = await t.service.autoPair('D');
+    expect(result?.event).toBe('challenge:accepted');
+    expect(result?.challenge.playerIds).toEqual(['A', 'B', 'C', 'D']);
+    expect(seated()).toEqual([['A', 'B', 'C', 'D']]);
+    expect(result?.matchReady.map((m) => m.userId).sort()).toEqual(['A', 'B', 'C', 'D']);
+    for (const id of ['A', 'B', 'C', 'D']) expect(await t.state(id)).toBeNull();
+  });
+
+  it('players readying at the same moment fill one table, nobody twice', async () => {
+    t = await createHarness(4, ['A', 'B', 'C', 'D', 'E']);
+    await Promise.all(['A', 'B', 'C', 'D', 'E'].map((id) => t.service.autoPair(id)));
+    const everyone = seated().flat();
+    expect(seated()).toHaveLength(1);
+    expect(new Set(everyone).size).toBe(4);
+  });
+
+  it('a table that cannot start returns all four to READY', async () => {
+    t = await createHarness(4, ['A', 'B', 'C', 'D']);
+    t.matchCreation.createSecuredMatch.mockRejectedValueOnce(new Error('database down'));
+    const failed = await t.service.autoPair('D');
+    expect(failed?.event).toBe('challenge:cancelled');
+    expect(failed?.restoredPlayers.map((p) => p.userId).sort()).toEqual(['A', 'B', 'C', 'D']);
+    for (const id of ['A', 'B', 'C', 'D']) expect(await t.state(id)).toBe('READY');
+  });
+
+  it('has no 1v1 requests or invites', async () => {
+    t = await createHarness(4, ['A', 'B']);
+    await expect(t.service.create('A', 'B', cmd())).rejects.toMatchObject({
+      response: { code: 'TABLE_AUTO_ONLY' },
+    });
+    await expect(t.service.createInvite('A', MODE, cmd())).rejects.toMatchObject({
+      response: { code: 'TABLE_AUTO_ONLY' },
     });
   });
 });

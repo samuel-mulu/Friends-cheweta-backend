@@ -293,6 +293,73 @@ describe('LudoMatchRuntime', () => {
     });
   });
 
+  describe('3–4 players: the winner takes the pot', () => {
+    function fourPlayerRuntime() {
+      const game = createInitialLudoState('m1', ['p1', 'p2', 'p3', 'p4']);
+      game.phase = LudoMatchPhase.PLAYING;
+      game.turnPhase = LudoTurnPhase.WAITING_FOR_ROLL;
+      game.currentPlayerId = 'p1';
+      // p1 is one step from home with the other three already there.
+      game.players[0].tokens.forEach((token, index) => {
+        token.state = index === 0 ? LudoTokenState.HOME_PATH : LudoTokenState.FINISHED;
+        token.progress = index === 0 ? 56 : 57;
+      });
+      // p3 has one token home; p4 is further along the track than p2.
+      game.players[2].tokens[0].state = LudoTokenState.FINISHED;
+      game.players[2].tokens[0].progress = 57;
+      game.players[3].tokens[0].state = LudoTokenState.ACTIVE;
+      game.players[3].tokens[0].progress = 30;
+      game.players[1].tokens[0].state = LudoTokenState.ACTIVE;
+      game.players[1].tokens[0].progress = 10;
+      return LudoMatchRuntime.restore(
+        {
+          game,
+          startingRoll: { round: 1, candidatePlayerIds: ['p1', 'p2', 'p3', 'p4'], rolls: {} },
+          resignedPlayerIds: [],
+        },
+        new FixedDiceProvider([1]),
+      );
+    }
+
+    it('the match ends at the first winner; the rest are ranked by progress', () => {
+      const runtime = fourPlayerRuntime();
+      runtime.execute({ type: 'ROLL_DICE', commandId: 'roll', playerId: 'p1', expectedVersion: 0 });
+      runtime.execute({
+        type: 'MOVE_TOKEN',
+        commandId: 'move',
+        playerId: 'p1',
+        tokenId: 'RED-1',
+        expectedVersion: 1,
+      });
+      const game = runtime.getState().game;
+      expect(game.phase).toBe(LudoMatchPhase.FINISHED);
+      expect(game.winnerOrder).toEqual(['p1', 'p3', 'p4', 'p2']);
+    });
+
+    it('one player leaving does not end it: the other three play on', () => {
+      const runtime = fourPlayerRuntime();
+      runtime.execute({ type: 'RESIGN', commandId: 'leave', playerId: 'p2', expectedVersion: 0 });
+      const game = runtime.getState().game;
+      expect(game.phase).toBe(LudoMatchPhase.PLAYING);
+      expect(game.currentPlayerId).toBe('p1');
+      expect(game.winnerOrder).toEqual([]);
+    });
+
+    it('a resigned player still ranks last when the match ends', () => {
+      const runtime = fourPlayerRuntime();
+      runtime.execute({ type: 'RESIGN', commandId: 'leave', playerId: 'p3', expectedVersion: 0 });
+      runtime.execute({ type: 'ROLL_DICE', commandId: 'roll', playerId: 'p1', expectedVersion: 1 });
+      runtime.execute({
+        type: 'MOVE_TOKEN',
+        commandId: 'move',
+        playerId: 'p1',
+        tokenId: 'RED-1',
+        expectedVersion: 2,
+      });
+      expect(runtime.getState().game.winnerOrder).toEqual(['p1', 'p4', 'p2', 'p3']);
+    });
+  });
+
   it('resignation ends a 1v1 match with the opponent first', () => {
     const game = createInitialLudoState('m1', ['p1', 'p2']);
     game.phase = LudoMatchPhase.PLAYING;

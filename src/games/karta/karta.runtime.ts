@@ -1,7 +1,6 @@
 import { commitmentOf, rankOf, shuffledDeck } from './karta.deck';
 import {
   KARTA_RANKS,
-  KARTA_TARGET_SCORE,
   KARTA_V1,
   KartaEventType,
   KartaGameState,
@@ -9,6 +8,8 @@ import {
   KartaRank,
   KartaRuntimeCommand,
   KartaRuntimeEvent,
+  KartaRulesVersion,
+  kartaTargetScore,
 } from './karta.types';
 
 /** Source of fresh secret seeds (crypto in production, fixed in tools). */
@@ -45,15 +46,16 @@ export function createKartaMatch(
   playerIds: [string, string],
   firstStarterId: string,
   newSeed: SeedSource,
+  rulesVersion: KartaRulesVersion = KARTA_V1,
 ): KartaMatchRuntimeState {
   const seed = newSeed();
   const base: KartaGameState = {
     matchId,
-    rulesVersion: KARTA_V1,
+    rulesVersion,
     version: 0,
     phase: 'PLAYING',
     players: playerIds.map((userId) => ({ userId })),
-    targetScore: KARTA_TARGET_SCORE,
+    targetScore: kartaTargetScore(rulesVersion),
     scores: Object.fromEntries(playerIds.map((id) => [id, 0])),
     round: 1,
     starterId: firstStarterId,

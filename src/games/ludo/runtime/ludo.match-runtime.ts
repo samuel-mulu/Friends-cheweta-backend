@@ -515,10 +515,13 @@ export class LudoMatchRuntime {
   private tryFinishMatch(events: LudoRuntimeEvent[]): boolean {
     const game = this.state.game;
     const active = this.activePlayerIds();
-    if (active.length > 1) return false;
+    // 3–4 players: the winner takes the pot, so the match ends at the first
+    // winner (nobody plays on for places that pay nothing). 1v1 is unchanged.
+    const firstWinnerEnds = game.players.length > 2 && game.winnerOrder.length > 0;
+    if (active.length > 1 && !firstWinnerEnds) return false;
 
-    if (active.length === 1 && !game.winnerOrder.includes(active[0])) {
-      game.winnerOrder.push(active[0]);
+    for (const playerId of this.byProgress(active)) {
+      if (!game.winnerOrder.includes(playerId)) game.winnerOrder.push(playerId);
     }
 
     // Resigned players rank behind players that remained active. Reverse resign
@@ -567,6 +570,26 @@ export class LudoMatchRuntime {
       retired.push(token.id);
     }
     return retired;
+  }
+
+  /**
+   * Players still racing, best first: more tokens home, then more distance
+   * covered, then seat order.
+   */
+  private byProgress(playerIds: string[]): string[] {
+    const seat = (id: string) => this.state.game.players.findIndex((p) => p.userId === id);
+    const score = (id: string) => {
+      const tokens = this.state.game.players[seat(id)].tokens;
+      return {
+        home: tokens.filter((token) => token.state === LudoTokenState.FINISHED).length,
+        distance: tokens.reduce((sum, token) => sum + Math.max(0, token.progress), 0),
+      };
+    };
+    return [...playerIds].sort((a, b) => {
+      const sa = score(a);
+      const sb = score(b);
+      return sb.home - sa.home || sb.distance - sa.distance || seat(a) - seat(b);
+    });
   }
 
   /** Finished = this match's goal reached ("first to N home"; default all four). */

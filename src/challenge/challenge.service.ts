@@ -22,7 +22,9 @@ import {
   ChallengeRecord,
   ChallengeTransition,
   ChallengeView,
+  seatsOf,
 } from './challenge.types';
+import { isAutoTable, isKartaTable, playersPerMatch } from '../gaming/player-counts';
 
 type MatchSummary = { id: string; participants?: Array<{ userId: string; seat: number }> } & Record<
   string,
@@ -54,6 +56,14 @@ const MATCH_SOURCE: Record<ChallengeKind, MatchSource> = {
 
 /** Ready players looked at (oldest first) when pairing someone automatically. */
 const AUTO_PAIR_SCAN = 20;
+/** Re-scans when a chosen player was taken meanwhile. */
+const AUTO_PAIR_ATTEMPTS = 3;
+
+const tableAutoOnly = () =>
+  new ConflictException({
+    code: 'TABLE_AUTO_ONLY',
+    message: "This table fills by itself: tap I'm ready.",
+  });
 /** A pair that just failed to start, or where one declined the other, is not auto-paired again for this long. */
 const PAIR_COOLDOWN_SECONDS = 30;
 
@@ -103,7 +113,8 @@ export class ChallengeService {
         code: 'LOBBY_DIFFERENT_MODE',
         message: 'Player is in a different lobby.',
       });
-    await this.lobby.assertCanPlay([challengerId, opponentId], challenger.gameModeId);
+    const mode = await this.lobby.assertCanPlay([challengerId, opponentId], challenger.gameModeId);
+    if (isAutoTable(mode)) throw tableAutoOnly();
 
     const now = Date.now();
     const record: ChallengeRecord = {
@@ -202,50 +213,54 @@ export class ChallengeService {
   }
 
   /**
-   * Automatic matching: pair [userId] (just READY) with the player who has
+   * Automatic matching: seat [userId] (just READY) with the players who have
    * waited longest at the same terms — same game mode (game, type, stake),
-   * both with auto-match on, and (Ludo) the same goal — and start the match.
+   * auto-match on, and (Ludo) the same goal — and start the match once every
+   * seat is filled (2 for 1v1, 3–4 for a Ludo table). Fewer: keep waiting.
    *
    * Race-safe with manual requests and with other pairings: PAIR_SCRIPT
-   * re-checks both players atomically (READY, no open request) and reserves
-   * them in the same step, creating the record directly as ACCEPTING; from
-   * there the normal accept path creates the match (Match.challengeId is
-   * unique) or releases both back to READY. Returns the transition to
-   * broadcast, or null when nobody could be paired.
+   * re-checks every player atomically (READY, no open request) and reserves
+   * them all or none, creating the record directly as ACCEPTING; from there
+   * the normal accept path creates the match (Match.challengeId is unique) or
+   * releases everyone back to READY. Returns the transition to broadcast, or
+   * null when the seats could not be filled.
    */
   async autoPair(userId: string): Promise<ChallengeTransition | null> {
     const me = await this.lobby.getContext(userId);
     if (!me || me.state !== 'READY' || me.autoMatch === false) return null;
+    let seats: number;
+    try {
+      seats = playersPerMatch(await this.lobby.assertCanPlay([userId], me.gameModeId));
+    } catch {
+      return null; // I can't play right now (balance, or already in a match)
+    }
 
-    const waiting = await this.redis
-      .raw()
-      .zRange(this.readyKey(me.gameModeId), 0, AUTO_PAIR_SCAN - 1); // oldest first
-    for (const otherId of waiting) {
-      if (otherId === userId) continue;
-      const other = await this.lobby.getContext(otherId);
-      if (!other || !sameAutoTerms(other, me)) continue;
-      if (await this.redis.raw().exists(this.pairCooldownKey(otherId, userId))) continue;
-      try {
-        await this.lobby.assertCanPlay([otherId, userId], me.gameModeId);
-      } catch {
-        continue; // e.g. balance, or already in a match: try the next player
-      }
+    for (let attempt = 0; attempt < AUTO_PAIR_ATTEMPTS; attempt += 1) {
+      const others = await this.waitingPartners(me, userId, seats - 1);
+      if (others.length < seats - 1) return null; // not enough players yet
 
-      // The longer-waiting player is the challenger (seat order for the match).
-      const record = this.newRecord('AUTO', me.gameModeId, otherId, userId, CHALLENGE_TTL_MS, {
-        status: 'ACCEPTING',
-        acceptingAtMs: Date.now(),
-        ...(me.tokensToWin ? { tokensToWin: me.tokensToWin } : {}),
-      });
+      // Longest waiting first (seat order); I take the last seat.
+      const playerIds = [...others, userId];
+      const record = this.newRecord(
+        'AUTO',
+        me.gameModeId,
+        playerIds[0],
+        playerIds[1],
+        CHALLENGE_TTL_MS,
+        {
+          status: 'ACCEPTING',
+          acceptingAtMs: Date.now(),
+          ...(me.tokensToWin ? { tokensToWin: me.tokensToWin } : {}),
+          ...(seats > 2 ? { playerIds } : {}),
+        },
+      );
       const result = (await this.redis.raw().eval(PAIR_SCRIPT, {
         keys: [
-          this.contextKey(otherId),
-          this.contextKey(userId),
-          this.reservationKey(otherId),
-          this.reservationKey(userId),
           this.challengeKey(record.id),
           this.readyKey(record.gameModeId),
           this.expiresKey(),
+          ...playerIds.map((id) => this.contextKey(id)),
+          ...playerIds.map((id) => this.reservationKey(id)),
         ],
         arguments: [
           JSON.stringify(record),
@@ -254,22 +269,50 @@ export class ChallengeService {
           String(RECORD_TTL_SECONDS),
           String(LOBBY_TTL_SECONDS),
           String(DEFAULT_TOKENS_TO_WIN),
+          String(playerIds.length),
+          ...playerIds,
         ],
       })) as string;
       if (result === 'NOT_READY' && !(await this.stillWaiting(userId))) return null; // I was taken meanwhile
-      if (result !== 'OK') continue; // they were taken or changed meanwhile: next player
+      if (result !== 'OK') continue; // someone was taken or changed meanwhile: look again
 
-      this.logger.log(`auto_pair_started challenge=${record.id} players=${otherId},${userId}`);
+      this.logger.log(`auto_pair_started challenge=${record.id} players=${playerIds.join(',')}`);
       try {
         return await this.completeAccept(record, userId, `auto:${record.id}`);
       } catch (error) {
         if (!(error instanceof ChallengeAcceptFailedError)) throw error;
-        // Both are back to READY; don't pair this two again at once.
-        await this.coolDownPair(otherId, userId);
+        // Everyone is back to READY; don't seat me with them again at once.
+        for (const otherId of others) await this.coolDownPair(otherId, userId);
         return error.transition;
       }
     }
     return null;
+  }
+
+  /** Up to [count] players ready at my terms who could play now, longest waiting first. */
+  private async waitingPartners(
+    me: LobbyUserContext,
+    userId: string,
+    count: number,
+  ): Promise<string[]> {
+    const waiting = await this.redis
+      .raw()
+      .zRange(this.readyKey(me.gameModeId), 0, AUTO_PAIR_SCAN - 1); // oldest first
+    const partners: string[] = [];
+    for (const otherId of waiting) {
+      if (partners.length === count) break;
+      if (otherId === userId) continue;
+      const other = await this.lobby.getContext(otherId);
+      if (!other || !sameAutoTerms(other, me)) continue;
+      if (await this.redis.raw().exists(this.pairCooldownKey(otherId, userId))) continue;
+      try {
+        await this.lobby.assertCanPlay([otherId], me.gameModeId);
+      } catch {
+        continue; // e.g. balance, or already in a match: try the next player
+      }
+      partners.push(otherId);
+    }
+    return partners;
   }
 
   private async stillWaiting(userId: string): Promise<boolean> {
@@ -332,7 +375,14 @@ export class ChallengeService {
       });
     }
     const opponentId = playerIds.find((id) => id !== userId)!;
-    await this.lobby.assertCanPlay([userId, opponentId], match.gameModeId);
+    const mode = await this.lobby.assertCanPlay([userId, opponentId], match.gameModeId);
+    // A Karta table carries on by itself; a 3–4 player table refills itself.
+    if (isAutoTable(mode) || isKartaTable(mode.rulesVersion)) {
+      throw new ConflictException({
+        code: 'REMATCH_NOT_AVAILABLE',
+        message: 'Tables start again from the lobby.',
+      });
+    }
 
     // A rematch is the same game again, goal included.
     const record = this.newRecord('REMATCH', match.gameModeId, userId, opponentId, REMATCH_TTL_MS, {
@@ -353,7 +403,8 @@ export class ChallengeService {
   ): Promise<{ challenge: ChallengeView; duplicate: boolean }> {
     const duplicate = await this.commandResult(commandId, userId);
     if (duplicate) return { challenge: await this.view(duplicate.challengeId), duplicate: true };
-    await this.lobby.assertCanPlay([userId], gameModeId);
+    const mode = await this.lobby.assertCanPlay([userId], gameModeId);
+    if (isAutoTable(mode)) throw tableAutoOnly();
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const inviteCode = this.inviteCode();
@@ -432,7 +483,7 @@ export class ChallengeService {
     try {
       match = await this.matchCreation.createSecuredMatch({
         gameModeId: challenge.gameModeId,
-        playerIds: [challenge.challengerId, challenge.opponentId],
+        playerIds: seatsOf(challenge),
         challengeId,
         source: MATCH_SOURCE[challenge.kind ?? 'LOBBY'],
         rematchOfMatchId: challenge.sourceMatchId,
@@ -593,15 +644,14 @@ export class ChallengeService {
     options: { allowAccepting?: boolean; excludeUserId?: string } = {},
   ): Promise<ChallengeTransition | null> {
     const now = Date.now();
+    const seats = seatsOf(challenge);
     const result = (await this.redis.raw().eval(TERMINAL_SCRIPT, {
       keys: [
         this.challengeKey(challenge.id),
-        this.reservationKey(challenge.challengerId),
-        this.reservationKey(challenge.opponentId),
-        this.contextKey(challenge.challengerId),
-        this.contextKey(challenge.opponentId),
         this.readyKey(challenge.gameModeId),
         this.expiresKey(),
+        ...seats.map((id) => this.reservationKey(id)),
+        ...seats.map((id) => this.contextKey(id)),
       ],
       arguments: [
         challenge.id,
@@ -612,6 +662,8 @@ export class ChallengeService {
         options.allowAccepting ? '1' : '0',
         options.excludeUserId ?? '',
         String(LOBBY_TTL_SECONDS),
+        String(seats.length),
+        ...seats,
       ],
     })) as string | string[];
     if (!Array.isArray(result)) return null;
@@ -637,26 +689,31 @@ export class ChallengeService {
       gameModeId: typeof match.gameModeId === 'string' ? match.gameModeId : '',
       challengerId: participants[0]?.userId ?? '',
       opponentId: participants[1]?.userId ?? '',
+      ...(participants.length > 2 ? { playerIds: participants.map((p) => p.userId) } : {}),
       status: 'ACCEPTED',
       createdAt: new Date().toISOString(),
       expiresAt: new Date().toISOString(),
       expiresAtMs: Date.now(),
     };
+    const playerIds = seatsOf(record);
     if (stored) {
       await this.redis.raw().eval(ACCEPTED_SCRIPT, {
         keys: [
           this.challengeKey(challengeId),
-          this.reservationKey(record.challengerId),
-          this.reservationKey(record.opponentId),
-          this.contextKey(record.challengerId),
-          this.contextKey(record.opponentId),
           this.readyKey(record.gameModeId),
           this.expiresKey(),
+          ...playerIds.map((id) => this.reservationKey(id)),
+          ...playerIds.map((id) => this.contextKey(id)),
         ],
-        arguments: [challengeId, match.id, String(RECORD_TTL_SECONDS)],
+        arguments: [
+          challengeId,
+          match.id,
+          String(RECORD_TTL_SECONDS),
+          String(playerIds.length),
+          ...playerIds,
+        ],
       });
     }
-    const playerIds = [record.challengerId, record.opponentId];
     return {
       event: 'challenge:accepted',
       challenge: {
@@ -686,7 +743,7 @@ export class ChallengeService {
 
     const committed = await this.prisma.matchParticipant.findMany({
       where: {
-        userId: { in: [challenge.challengerId, challenge.opponentId] },
+        userId: { in: seatsOf(challenge) },
         match: { status: { in: COMMITTED_MATCH_STATUSES } },
       },
       select: { userId: true },
@@ -875,37 +932,39 @@ redis.call('set', KEYS[2], cjson.encode(b), 'EX', tonumber(ARGV[5]))
 redis.call('zadd', KEYS[7], ARGV[3], ARGV[2])
 return 'OK'`;
 
-// Automatic pairing: both players must still be READY at the same terms with
-// no open request; both are reserved and the record is stored as ACCEPTING in
-// one atomic step, so a manual request (RESERVE_SCRIPT needs the target READY
-// and unreserved) or another pairing racing it fails cleanly.
-// KEYS: ctxA ctxB resA resB challenge ready expires
-// ARGV: recordJson id expiresAtMs recordTtl ctxTtl defaultGoal
+// Automatic pairing: every player must still be READY at the same terms with
+// no open request; all are reserved and the record is stored as ACCEPTING in
+// one atomic step (all or none), so a manual request (RESERVE_SCRIPT needs the
+// target READY and unreserved) or another pairing racing it fails cleanly.
+// KEYS: challenge ready expires ctx1..ctxN res1..resN
+// ARGV: recordJson id expiresAtMs recordTtl ctxTtl defaultGoal N userId1..userIdN
 const PAIR_SCRIPT = `
-local aCtx = redis.call('get', KEYS[1])
-local bCtx = redis.call('get', KEYS[2])
-if not aCtx or not bCtx then return 'LOBBY_NOT_JOINED' end
-local a = cjson.decode(aCtx)
-local b = cjson.decode(bCtx)
-if a.gameModeId ~= b.gameModeId then return 'LOBBY_DIFFERENT_MODE' end
-if a.state ~= 'READY' or b.state ~= 'READY' then return 'NOT_READY' end
-if a.autoMatch == false or b.autoMatch == false then return 'AUTO_MATCH_OFF' end
-local goal = tonumber(ARGV[6])
-local aGoal = tonumber(a.tokensToWin) or goal
-local bGoal = tonumber(b.tokensToWin) or goal
-if aGoal ~= bGoal then return 'DIFFERENT_TERMS' end
-if redis.call('exists', KEYS[3]) == 1 or redis.call('exists', KEYS[4]) == 1 then return 'LOBBY_USER_BUSY' end
-local record = cjson.decode(ARGV[1])
+local n = tonumber(ARGV[7])
+local defaultGoal = tonumber(ARGV[6])
+local ctxs = {}
+local modeId = nil
+local goal = nil
+for i = 1, n do
+  local raw = redis.call('get', KEYS[3 + i])
+  if not raw then return 'LOBBY_NOT_JOINED' end
+  local ctx = cjson.decode(raw)
+  if modeId == nil then modeId = ctx.gameModeId elseif ctx.gameModeId ~= modeId then return 'LOBBY_DIFFERENT_MODE' end
+  if ctx.state ~= 'READY' then return 'NOT_READY' end
+  if ctx.autoMatch == false then return 'AUTO_MATCH_OFF' end
+  local g = tonumber(ctx.tokensToWin) or defaultGoal
+  if goal == nil then goal = g elseif g ~= goal then return 'DIFFERENT_TERMS' end
+  if redis.call('exists', KEYS[3 + n + i]) == 1 then return 'LOBBY_USER_BUSY' end
+  ctxs[i] = ctx
+end
 local ttl = tonumber(ARGV[4])
-a.state = 'CHALLENGED'
-b.state = 'CHALLENGED'
-redis.call('set', KEYS[3], ARGV[2], 'EX', ttl)
-redis.call('set', KEYS[4], ARGV[2], 'EX', ttl)
-redis.call('set', KEYS[5], ARGV[1], 'EX', ttl)
-redis.call('zrem', KEYS[6], record.challengerId, record.opponentId)
-redis.call('set', KEYS[1], cjson.encode(a), 'EX', tonumber(ARGV[5]))
-redis.call('set', KEYS[2], cjson.encode(b), 'EX', tonumber(ARGV[5]))
-redis.call('zadd', KEYS[7], ARGV[3], ARGV[2])
+redis.call('set', KEYS[1], ARGV[1], 'EX', ttl)
+for i = 1, n do
+  ctxs[i].state = 'CHALLENGED'
+  redis.call('set', KEYS[3 + n + i], ARGV[2], 'EX', ttl)
+  redis.call('set', KEYS[3 + i], cjson.encode(ctxs[i]), 'EX', tonumber(ARGV[5]))
+  redis.call('zrem', KEYS[2], ARGV[7 + i])
+end
+redis.call('zadd', KEYS[3], ARGV[3], ARGV[2])
 return 'OK'`;
 
 // KEYS: challenge resA resB
@@ -922,8 +981,8 @@ record.acceptingAtMs = tonumber(ARGV[2])
 redis.call('set', KEYS[1], cjson.encode(record), 'EX', tonumber(ARGV[3]))
 return 'OK'`;
 
-// KEYS: challenge resA resB ctxA ctxB ready expires
-// ARGV: id status recordTtl readyScore readyIso allowAccepting excludeUserId ctxTtl
+// KEYS: challenge ready expires res1..resN ctx1..ctxN
+// ARGV: id status recordTtl readyScore readyIso allowAccepting excludeUserId ctxTtl N userId1..userIdN
 // Returns {'OK', restoredUserId...} or an error code string.
 const TERMINAL_SCRIPT = `
 local raw = redis.call('get', KEYS[1])
@@ -933,29 +992,32 @@ if record.status == 'ACCEPTING' and ARGV[6] ~= '1' then return 'CHALLENGE_ACCEPT
 if record.status ~= 'PENDING' and record.status ~= 'ACCEPTING' then return 'ALREADY_TERMINAL' end
 record.status = ARGV[2]
 redis.call('set', KEYS[1], cjson.encode(record), 'EX', tonumber(ARGV[3]))
-for i = 2, 3 do
-  if redis.call('get', KEYS[i]) == ARGV[1] then redis.call('del', KEYS[i]) end
+local n = tonumber(ARGV[9])
+for i = 1, n do
+  if redis.call('get', KEYS[3 + i]) == ARGV[1] then redis.call('del', KEYS[3 + i]) end
 end
-redis.call('zrem', KEYS[7], ARGV[1])
+redis.call('zrem', KEYS[3], ARGV[1])
 local restored = {'OK'}
-local function restore(ctxKey, userId)
-  if userId == ARGV[7] then return end
-  local ctxRaw = redis.call('get', ctxKey)
-  if not ctxRaw then return end
-  local ctx = cjson.decode(ctxRaw)
-  if ctx.state ~= 'CHALLENGED' or ctx.gameModeId ~= record.gameModeId then return end
-  ctx.state = 'READY'
-  ctx.readyAt = ARGV[5]
-  redis.call('set', ctxKey, cjson.encode(ctx), 'EX', tonumber(ARGV[8]))
-  redis.call('zadd', KEYS[6], ARGV[4], userId)
-  table.insert(restored, userId)
+for i = 1, n do
+  local userId = ARGV[9 + i]
+  local ctxKey = KEYS[3 + n + i]
+  local ctxRaw = nil
+  if userId ~= '' and userId ~= ARGV[7] then ctxRaw = redis.call('get', ctxKey) end
+  if ctxRaw then
+    local ctx = cjson.decode(ctxRaw)
+    if ctx.state == 'CHALLENGED' and ctx.gameModeId == record.gameModeId then
+      ctx.state = 'READY'
+      ctx.readyAt = ARGV[5]
+      redis.call('set', ctxKey, cjson.encode(ctx), 'EX', tonumber(ARGV[8]))
+      redis.call('zadd', KEYS[2], ARGV[4], userId)
+      table.insert(restored, userId)
+    end
+  end
 end
-restore(KEYS[4], record.challengerId)
-restore(KEYS[5], record.opponentId)
 return restored`;
 
-// KEYS: challenge resA resB ctxA ctxB ready expires
-// ARGV: id matchId recordTtl
+// KEYS: challenge ready expires res1..resN ctx1..ctxN
+// ARGV: id matchId recordTtl N userId1..userIdN
 // A durable match exists, so this applies from any status.
 const ACCEPTED_SCRIPT = `
 local raw = redis.call('get', KEYS[1])
@@ -965,12 +1027,13 @@ if record.status == 'ACCEPTED' then return 'ALREADY_ACCEPTED' end
 record.status = 'ACCEPTED'
 record.matchId = ARGV[2]
 redis.call('set', KEYS[1], cjson.encode(record), 'EX', tonumber(ARGV[3]))
-for i = 2, 3 do
-  if redis.call('get', KEYS[i]) == ARGV[1] then redis.call('del', KEYS[i]) end
+local n = tonumber(ARGV[4])
+for i = 1, n do
+  if redis.call('get', KEYS[3 + i]) == ARGV[1] then redis.call('del', KEYS[3 + i]) end
+  redis.call('del', KEYS[3 + n + i])
+  redis.call('zrem', KEYS[2], ARGV[4 + i])
 end
-redis.call('del', KEYS[4], KEYS[5])
-redis.call('zrem', KEYS[6], record.challengerId, record.opponentId)
-redis.call('zrem', KEYS[7], ARGV[1])
+redis.call('zrem', KEYS[3], ARGV[1])
 return 'OK'`;
 
 // KEYS: challenge expires inviteKey res...

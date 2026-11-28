@@ -23,6 +23,8 @@ import {
 } from '../../lobby/dto/lobby.dto';
 import { LobbyRooms } from '../../lobby/lobby-rooms';
 import { LobbyService } from '../../lobby/lobby.service';
+import { isKartaTable } from '../../gaming/player-counts';
+import { KartaTableService } from '../karta/karta-table.service';
 import { LobbyMatchmakingService } from '../lobby-matchmaking.service';
 import { RealtimePublisherService } from '../realtime-publisher.service';
 import { AuthenticatedSocket } from '../realtime.types';
@@ -42,6 +44,7 @@ export class LobbyGateway {
     private readonly publisher: RealtimePublisherService,
     private readonly rooms: LobbyRooms,
     private readonly matchmaking: LobbyMatchmakingService,
+    private readonly tables: KartaTableService,
   ) {}
 
   /**
@@ -62,12 +65,16 @@ export class LobbyGateway {
         await this.lobby.leave(user.id).catch(() => undefined);
         return { ok: true, commandId: dto.commandId, data: { activeMatch } };
       }
+      // Waiting in a Karta table's queue: back to the table, not the lobby.
+      const activeTable = await this.tables.mine(user.id);
+      if (activeTable) return { ok: true, commandId: dto.commandId, data: { activeTable } };
       const result = await this.lobby.joinGame(
         user.id,
         dto.gameCode,
         dto.gameModeId,
         dto.customStakeMinor,
         dto.rulesVersion,
+        dto.playerCount,
       );
       if (result.changed) {
         if (result.previousGameModeId && result.previousGameModeId !== result.gameModeId) {
@@ -95,12 +102,18 @@ export class LobbyGateway {
         .flat()
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
         .slice(-50);
+      // Karta tables with a free seat (join mid-game).
+      const tableStakes = result.snapshot.stakes
+        .filter((stake) => isKartaTable(stake.rulesVersion))
+        .map((stake) => stake.id);
+      const tables = tableStakes.length ? await this.tables.openTables(tableStakes) : [];
       return {
         ok: true,
         commandId: dto.commandId,
         data: {
           ...result.snapshot,
           recentMessages,
+          tables,
           ...(activeChallenge ? { activeChallenge } : {}),
         },
       };

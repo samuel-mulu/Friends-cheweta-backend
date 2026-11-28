@@ -13,9 +13,18 @@
  * revealed so anyone can re-derive the deck and verify it.
  */
 export const KARTA_V1 = 'KARTA_LATLAT_V1' as const;
-export type KartaRulesVersion = typeof KARTA_V1;
+/**
+ * KARTA_TABLE_V1 — one round of a queue table (up to 4 seats). Played exactly
+ * like a V1 round between the table's starter (seat 0, the last round's
+ * winner) and the first receiver in the queue; the first card of the called
+ * rank wins it, and the round pays at once (a 1v1 match to one point). The
+ * table (KartaTableService) then seats the winner as starter, sends the loser
+ * to the back of the queue and starts the next round.
+ */
+export const KARTA_TABLE_V1 = 'KARTA_TABLE_V1' as const;
+export type KartaRulesVersion = typeof KARTA_V1 | typeof KARTA_TABLE_V1;
 export const isKartaRulesVersion = (value: string): value is KartaRulesVersion =>
-  value === KARTA_V1;
+  value === KARTA_V1 || value === KARTA_TABLE_V1;
 
 export const KARTA_RANKS = [
   'A',
@@ -39,6 +48,10 @@ export type KartaSuit = (typeof KARTA_SUITS)[number];
 export type KartaCard = string;
 
 export const KARTA_TARGET_SCORE = 3;
+
+/** Rounds needed to win a match of [rulesVersion]: a table round is one. */
+export const kartaTargetScore = (rulesVersion: KartaRulesVersion): number =>
+  rulesVersion === KARTA_TABLE_V1 ? 1 : KARTA_TARGET_SCORE;
 
 export type KartaRoundPhase = 'CALLING' | 'FLIPPING';
 

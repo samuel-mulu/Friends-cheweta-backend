@@ -9,6 +9,7 @@ import { COMMITTED_MATCH_STATUSES, RECOVERABLE_MATCH_STATUSES } from '../common/
 import { UserStatus } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
+import { isAutoTable } from '../gaming/player-counts';
 import { LobbyRooms } from './lobby-rooms';
 import {
   CUSTOM_CODE_SUFFIX,
@@ -55,6 +56,7 @@ export class LobbyService {
     gameModeId?: string,
     customStakeMinor?: number,
     rulesVersion?: string,
+    playerCount?: number,
   ): Promise<{
     gameId: string;
     gameModeId: string;
@@ -66,7 +68,13 @@ export class LobbyService {
     const game = await this.requireGame(gameCode);
     let stakes = await this.stakesOf(game);
     if (customStakeMinor !== undefined) {
-      const custom = await this.customStake(game, customStakeMinor, userId, rulesVersion);
+      const custom = await this.customStake(
+        game,
+        customStakeMinor,
+        userId,
+        rulesVersion,
+        playerCount,
+      );
       gameModeId = custom.id;
       if (!stakes.some((stake) => stake.id === custom.id)) stakes = [...stakes, custom];
     } else if (gameModeId && !stakes.some((stake) => stake.id === gameModeId)) {
@@ -229,10 +237,12 @@ export class LobbyService {
     amountMinor: number,
     userId: string,
     rulesVersion?: string,
+    playerCount = 2,
   ) {
-    const ofRules = rulesVersion
-      ? game.modes.filter((mode) => mode.rulesVersion === rulesVersion)
-      : game.modes;
+    const ofRules = game.modes.filter(
+      (mode) =>
+        (!rulesVersion || mode.rulesVersion === rulesVersion) && mode.playerCount === playerCount,
+    );
     if (ofRules.length === 0) {
       throw new BadRequestException({
         code: 'LOBBY_MODE_DISABLED',
@@ -267,14 +277,16 @@ export class LobbyService {
     const template = ofRules[0];
     // Existing custom codes stay as they were; other types get their own.
     const suffix = CUSTOM_CODE_SUFFIX[template.rulesVersion];
-    const code = `${game.code}_CUSTOM_${amountMinor}${suffix ? `_${suffix}` : ''}`;
+    // 1v1 codes stay as they were; bigger tables say their size.
+    const size = playerCount > 2 ? `${playerCount}P_` : '';
+    const code = `${game.code}_${size}CUSTOM_${amountMinor}${suffix ? `_${suffix}` : ''}`;
     const mode = await this.prisma.gameMode.upsert({
       where: { code },
       update: {},
       create: {
         gameId: game.id,
         code,
-        name: `${game.name} 1v1 - ${amountMinor / 100} ETB`,
+        name: `${game.name} ${playerCount > 2 ? `${playerCount} players` : '1v1'} - ${amountMinor / 100} ETB`,
         playerCount: template.playerCount,
         stakeAmountMinor: amount,
         platformFeeBps: template.platformFeeBps,
@@ -375,7 +387,8 @@ export class LobbyService {
       ...context,
       state: 'READY',
       readyAt,
-      autoMatch: prefs.autoMatch ?? true,
+      // A 3–4 player table only fills automatically.
+      autoMatch: isAutoTable(mode) ? true : (prefs.autoMatch ?? true),
       tokensToWin:
         mode.game.code === 'LUDO' ? (prefs.tokensToWin ?? DEFAULT_TOKENS_TO_WIN) : undefined,
     };

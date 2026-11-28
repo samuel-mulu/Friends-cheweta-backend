@@ -32,4 +32,11 @@ export class PracticeStartDto {
   @IsOptional()
   @Matches(/^[A-Z0-9_]{2,40}$/)
   rulesVersion?: string;
+
+  /** Ludo only: players at the table, me included (2–4). Default 2. */
+  @IsOptional()
+  @IsInt()
+  @Min(2)
+  @Max(4)
+  players?: number;
 }

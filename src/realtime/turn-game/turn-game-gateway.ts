@@ -87,7 +87,7 @@ export abstract class TurnGameGateway<
     }
   }
 
-  private async snapshot(matchId: string, state: S) {
+  protected async snapshot(matchId: string, state: S) {
     return {
       ok: true as const,
       state: this.runtime.definition.publicState(state),

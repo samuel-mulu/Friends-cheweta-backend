@@ -18,9 +18,8 @@ import {
 import { withFinancialTiming } from '../common/utils/financial-instrumentation.util';
 import { PrismaService } from '../prisma/prisma.service';
 
-/** Games with a live runtime (all 1v1). */
-const SUPPORTED_GAME_CODES = ['LUDO', 'DAMA', 'KARTA'];
 import { WalletService } from '../wallet/wallet.service';
+import { isKartaTable, playersPerMatch, supportsPlayerCount } from '../gaming/player-counts';
 
 /** Paid matches come from a challenge, a rematch or an invite (never PRACTICE). */
 export type MatchSource = Exclude<PrismaMatchSource, 'PRACTICE'>;
@@ -33,13 +32,16 @@ type MatchWithMoney = {
 
 type CreateSecuredMatchInput = {
   gameModeId: string;
-  playerIds: [string, string];
+  /** Seat order (seat 0 first); as many as the mode plays in one match. */
+  playerIds: string[];
   challengeId?: string;
   matchmakingKey?: string;
   source: MatchSource;
   rematchOfMatchId?: string;
   /** "First to N home" (1-4); default 4. */
   tokensToWin?: number;
+  /** Karta table rounds only: the table's current (possibly raised) stake. */
+  stakeAmountMinor?: bigint;
 };
 
 // Prisma's default interactive-transaction timeout is 5s. Match creation makes
@@ -97,20 +99,31 @@ export class MatchCreationService {
               message: 'Game mode is not available.',
             });
           }
-          if (!SUPPORTED_GAME_CODES.includes(mode.game.code) || mode.playerCount !== 2) {
+          if (!supportsPlayerCount(mode.game.code, mode.playerCount)) {
             throw new ConflictException({
               code: 'MATCH_CREATION_MODE_NOT_SUPPORTED',
-              message: 'Only 1v1 modes of the live games are supported.',
+              message: 'This game mode is not supported.',
             });
           }
-          if (new Set(input.playerIds).size !== 2) {
+          const seats = playersPerMatch(mode);
+          if (
+            input.playerIds.length !== seats ||
+            new Set(input.playerIds).size !== input.playerIds.length
+          ) {
             throw new ConflictException({
               code: 'INVALID_MATCH_PARTICIPANTS',
-              message: 'Match requires two unique players.',
+              message: `Match requires ${seats} unique players.`,
             });
           }
+          if (input.stakeAmountMinor !== undefined && !isKartaTable(mode.rulesVersion)) {
+            throw new ConflictException({
+              code: 'MATCH_STAKE_OVERRIDE_NOT_ALLOWED',
+              message: 'Only table rounds may change the stake.',
+            });
+          }
+          const stake = input.stakeAmountMinor ?? mode.stakeAmountMinor;
 
-          await this.assertPlayersEligible(tx, input.playerIds, mode.stakeAmountMinor);
+          await this.assertPlayersEligible(tx, input.playerIds, stake);
           await this.assertNoActiveMatch(tx, input.playerIds);
 
           // One statement creates the match READY with participants and entry
@@ -124,7 +137,7 @@ export class MatchCreationService {
               entrySecuredAt: new Date(),
               rulesVersion: mode.rulesVersion,
               tokensToWin: input.tokensToWin ?? 4,
-              stakeAmountMinor: mode.stakeAmountMinor,
+              stakeAmountMinor: stake,
               platformFeeBps: mode.platformFeeBps,
               sessionCode: this.sessionCode(),
               challengeId: input.challengeId,
@@ -137,7 +150,7 @@ export class MatchCreationService {
               entries: {
                 create: input.playerIds.map((userId) => ({
                   userId,
-                  amountMinor: mode.stakeAmountMinor,
+                  amountMinor: stake,
                   status: MatchEntryStatus.LOCKED,
                 })),
               },
@@ -145,11 +158,11 @@ export class MatchCreationService {
             include: this.matchInclude(),
           });
 
-          if (mode.stakeAmountMinor > 0n) {
+          if (stake > 0n) {
             for (const userId of input.playerIds) {
               await this.wallet.lockFundsInTransaction(tx, {
                 userId,
-                amountMinor: mode.stakeAmountMinor,
+                amountMinor: stake,
                 type: WalletTransactionType.GAME_ENTRY_LOCK,
                 idempotencyKey: `game-entry:${match.id}:${userId}`,
                 referenceType: 'MATCH',

@@ -34,6 +34,13 @@ export class LobbyJoinGameDto {
   @IsOptional()
   @Matches(/^[A-Z0-9_]{2,40}$/)
   rulesVersion?: string;
+
+  /** With `customStakeMinor`: the table size (2–4). Default 2. */
+  @IsOptional()
+  @IsInt()
+  @Min(2)
+  @Max(4)
+  playerCount?: number;
 }
 
 export class LobbyCommandDto {

@@ -3,6 +3,7 @@ import { GameEntryModule } from '../game-entry/game-entry.module';
 import { ChallengeModule } from '../challenge/challenge.module';
 import { ChatModule } from '../chat/chat.module';
 import { LobbyModule } from '../lobby/lobby.module';
+import { MatchCreationModule } from '../match-creation/match-creation.module';
 import { MatchHistoryModule } from '../match-history/match-history.module';
 import { SettlementModule } from '../settlement/settlement.module';
 import { BotDriverService } from '../practice/bot-driver.service';
@@ -23,6 +24,7 @@ import {
   KartaTurnTimerService,
 } from './karta/karta.game';
 import { KartaGateway } from './karta/karta.gateway';
+import { KartaTableService } from './karta/karta-table.service';
 import {
   LudoRuntimeRepository,
   LudoRuntimeService,
@@ -47,6 +49,7 @@ import { GameRegistry } from './turn-game/game-registry';
     GameEntryModule,
     SettlementModule,
     MatchHistoryModule,
+    MatchCreationModule,
   ],
   providers: [
     ConnectionGateway,
@@ -77,6 +80,7 @@ import { GameRegistry } from './turn-game/game-registry';
     KartaRuntimeService,
     KartaTurnTimerService,
     KartaGateway,
+    KartaTableService,
     // Cross-game
     {
       provide: GameRegistry,

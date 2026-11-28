@@ -35,7 +35,16 @@ export type ChallengeRecord = {
   matchId?: string;
   /** "First to N home" (1-4); absent = 4. Copied to the match on accept. */
   tokensToWin?: number;
+  /**
+   * A 3–4 player table (AUTO only): every seat in seat order, challenger
+   * first. Absent on 1v1 records, whose seats are challenger and opponent.
+   */
+  playerIds?: string[];
 };
+
+/** Every player of a request, in seat order. */
+export const seatsOf = (record: ChallengeRecord): string[] =>
+  record.playerIds?.length ? record.playerIds : [record.challengerId, record.opponentId];
 
 export type ChallengeView = ChallengeRecord & {
   challengerName?: string;

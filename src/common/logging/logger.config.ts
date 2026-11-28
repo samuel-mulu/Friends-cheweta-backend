@@ -28,7 +28,10 @@ export function loggerConfig(nodeEnv: string): Params {
       customAttributeKeys: { reqId: 'requestId', responseTime: 'durationMs' },
       // Method, path and status only: never headers (tokens) or bodies.
       serializers: {
-        req: (req: { method: string; url: string }) => ({ method: req.method, path: req.url.split('?')[0] }),
+        req: (req: { method: string; url: string }) => ({
+          method: req.method,
+          path: req.url.split('?')[0],
+        }),
         res: (res: { statusCode: number }) => ({ statusCode: res.statusCode }),
       },
       autoLogging: { ignore: (req: IncomingMessage) => req.url === '/api/health' },

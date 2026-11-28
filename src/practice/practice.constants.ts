@@ -31,6 +31,16 @@ export const PRACTICE_BOTS: Record<PracticeLevel, { fullName: string; phone: str
 };
 
 /**
+ * The bots at a practice table of [players] (me included): the chosen level
+ * first, then the other levels, strongest first. Each level has one account,
+ * so a 4-player table plays one bot of every level.
+ */
+export function practiceBotLevels(level: PracticeLevel, players: number): PracticeLevel[] {
+  const others = (['HARD', 'NORMAL', 'EASY'] as const).filter((other) => other !== level);
+  return [level, ...others].slice(0, Math.max(1, Math.min(players, 4) - 1));
+}
+
+/**
  * Strategy per level, ranked by head-to-head simulation (npm run bots:ludo):
  * Heuristic beats Random ~86% and Aggressive ~81%; Aggressive beats Random ~67%.
  */

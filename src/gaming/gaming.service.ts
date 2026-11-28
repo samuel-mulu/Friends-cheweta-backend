@@ -3,6 +3,7 @@ import { GameMode } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateGameModeDto } from './dto/create-game-mode.dto';
 import { UpdateGameModeDto } from './dto/update-game-mode.dto';
+import { PLAYER_COUNTS, supportsPlayerCount } from './player-counts';
 
 @Injectable()
 export class GamingService {
@@ -52,6 +53,12 @@ export class GamingService {
   async createMode(dto: CreateGameModeDto) {
     const game = await this.prisma.game.findUnique({ where: { code: dto.gameCode.toUpperCase() } });
     if (!game) throw new NotFoundException({ code: 'GAME_NOT_FOUND', message: 'Game not found.' });
+    if (!supportsPlayerCount(game.code, dto.playerCount)) {
+      throw new ConflictException({
+        code: 'GAME_MODE_PLAYER_COUNT_NOT_SUPPORTED',
+        message: `${game.name} supports ${(PLAYER_COUNTS[game.code] ?? [2]).join(', ')} players.`,
+      });
+    }
 
     const existing = await this.prisma.gameMode.findUnique({
       where: { code: dto.code.toUpperCase() },
